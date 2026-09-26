@@ -14,6 +14,7 @@ import {
 import { Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
 import { Table } from '@phosphor-icons/react/dist/csr/Table';
+import { TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import i18next from 'i18next';
 import * as React from 'react';
@@ -49,6 +50,7 @@ import SidebarNotesSection from '@app/entityV2/shared/sidebarSection/SidebarNote
 import SidebarStructuredProperties from '@app/entityV2/shared/sidebarSection/SidebarStructuredProperties';
 import { SUMMARY_TAB_ICON } from '@app/entityV2/shared/summary/HeaderComponents';
 import AccessManagement from '@app/entityV2/shared/tabs/Dataset/AccessManagement/AccessManagement';
+import ExploreTab from '@app/entityV2/shared/tabs/Dataset/Explore/ExploreTab';
 import QueriesTab from '@app/entityV2/shared/tabs/Dataset/Queries/QueriesTab';
 import { SchemaTab } from '@app/entityV2/shared/tabs/Dataset/Schema/SchemaTab';
 import StatsTabWrapper from '@app/entityV2/shared/tabs/Dataset/Stats/StatsTabWrapper';
@@ -230,6 +232,15 @@ export class DatasetEntity implements Entity<Dataset> {
                         ).length || 0;
                     const propertiesCount = customPropertiesCount + visibleStructuredPropertiesCount;
                     return propertiesCount;
+                },
+            },
+            {
+                name: i18next.t('entity.types:tab.explore'),
+                component: ExploreTab,
+                icon: TerminalWindow,
+                display: {
+                    visible: (_, _1) => true,
+                    enabled: (_, _2) => true,
                 },
             },
             {
