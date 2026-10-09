@@ -9,6 +9,8 @@ import { useTranslation } from 'react-i18next';
 import styled from 'styled-components';
 
 import { useEntityData } from '@app/entity/shared/EntityContext';
+import QueryTabBar from '@app/entityV2/shared/tabs/Dataset/Explore/QueryTabBar';
+import { useQueryWorkspace } from '@app/entityV2/shared/tabs/Dataset/Explore/QueryWorkspaceContext';
 import { QueryServiceError, runDatasetQuery } from '@app/entityV2/shared/tabs/Dataset/Explore/queryService';
 import { DatasetQueryResult, QueryResultRow } from '@app/entityV2/shared/tabs/Dataset/Explore/types';
 import { EntityTabProps } from '@app/entityV2/shared/types';
@@ -16,6 +18,18 @@ import { useMonacoTheme } from '@app/theme/useMonacoTheme';
 
 const DEFAULT_LIMIT = 100;
 const EDITOR_HEIGHT = '240px';
+
+type TabExecutionState = {
+    result: DatasetQueryResult | null;
+    error: Error | null;
+    isRunning: boolean;
+};
+
+const EMPTY_EXECUTION_STATE: TabExecutionState = {
+    result: null,
+    error: null,
+    isRunning: false,
+};
 
 const Page = styled.div`
     display: flex;
@@ -41,6 +55,7 @@ const HeaderCopy = styled.div`
 `;
 
 const Card = styled.section`
+    flex-shrink: 0;
     overflow: hidden;
     border: 1px solid ${(props) => props.theme.colors.border};
     border-radius: 8px;
@@ -71,12 +86,16 @@ const EditorContainer = styled.div`
 
 const EditorActions = styled.div`
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     padding: 12px 16px;
     border-top: 1px solid ${(props) => props.theme.colors.border};
+`;
+
+const SecurityNotice = styled(Text)`
+    min-width: 0;
+    flex: 1;
 `;
 
 const ButtonGroup = styled.div`
@@ -164,25 +183,24 @@ export default function ExploreTab(_props: EntityTabProps) {
     const { t } = useTranslation('entity.profile.queries');
     const { urn, entityData } = useEntityData();
     const monacoTheme = useMonacoTheme();
-    const abortController = useRef<AbortController | null>(null);
-    const [query, setQuery] = useState('');
-    const [hasInitializedQuery, setHasInitializedQuery] = useState(false);
-    const [result, setResult] = useState<DatasetQueryResult | null>(null);
-    const [error, setError] = useState<Error | null>(null);
-    const [isRunning, setIsRunning] = useState(false);
+    const { workspace, activeTab, initializeTabSql, updateTabSql } = useQueryWorkspace();
+    const abortControllers = useRef<Record<string, AbortController>>({});
+    const [executionByTabId, setExecutionByTabId] = useState<Record<string, TabExecutionState>>({});
 
     const entityName = entityData?.properties?.qualifiedName || entityData?.properties?.name || entityData?.name;
+    const execution = executionByTabId[activeTab.id] || EMPTY_EXECUTION_STATE;
+    const { result, error, isRunning } = execution;
 
     useEffect(() => {
-        if (!hasInitializedQuery && entityName) {
-            setQuery(buildDefaultQuery(entityName));
-            setHasInitializedQuery(true);
+        const isInitialTab = workspace.tabs[0]?.id === activeTab.id;
+        if (isInitialTab && activeTab.revision === 0 && !activeTab.sql && entityName) {
+            initializeTabSql(activeTab.id, buildDefaultQuery(entityName));
         }
-    }, [entityName, hasInitializedQuery]);
+    }, [activeTab.id, activeTab.revision, activeTab.sql, entityName, initializeTabSql, workspace.tabs]);
 
     useEffect(
         () => () => {
-            abortController.current?.abort();
+            Object.values(abortControllers.current).forEach((controller) => controller.abort());
         },
         [],
     );
@@ -209,37 +227,53 @@ export default function ExploreTab(_props: EntityTabProps) {
     );
 
     const runQuery = async () => {
-        if (!urn || !query.trim() || isRunning) {
+        const sql = activeTab.sql.trim();
+        const tabId = activeTab.id;
+        if (!urn || !sql || isRunning) {
             return;
         }
 
-        abortController.current?.abort();
+        abortControllers.current[tabId]?.abort();
         const controller = new AbortController();
-        abortController.current = controller;
-        setIsRunning(true);
-        setError(null);
+        abortControllers.current[tabId] = controller;
+        setExecutionByTabId((current) => ({
+            ...current,
+            [tabId]: { result: current[tabId]?.result || null, error: null, isRunning: true },
+        }));
 
         try {
-            const nextResult = await runDatasetQuery({ datasetUrn: urn, sql: query.trim() }, controller.signal);
-            setResult(nextResult);
+            const nextResult = await runDatasetQuery({ datasetUrn: urn, sql }, controller.signal);
+            setExecutionByTabId((current) => ({
+                ...current,
+                [tabId]: { result: nextResult, error: null, isRunning: false },
+            }));
         } catch (requestError) {
             if (requestError instanceof DOMException && requestError.name === 'AbortError') {
                 return;
             }
-            setResult(null);
-            setError(requestError instanceof Error ? requestError : new Error(t('explore.unexpectedError')));
+            setExecutionByTabId((current) => ({
+                ...current,
+                [tabId]: {
+                    result: null,
+                    error: requestError instanceof Error ? requestError : new Error(t('explore.unexpectedError')),
+                    isRunning: false,
+                },
+            }));
         } finally {
-            if (abortController.current === controller) {
-                abortController.current = null;
-                setIsRunning(false);
+            if (abortControllers.current[tabId] === controller) {
+                delete abortControllers.current[tabId];
             }
         }
     };
 
     const clearQuery = () => {
-        setQuery('');
-        setResult(null);
-        setError(null);
+        abortControllers.current[activeTab.id]?.abort();
+        delete abortControllers.current[activeTab.id];
+        updateTabSql(activeTab.id, '');
+        setExecutionByTabId((current) => ({
+            ...current,
+            [activeTab.id]: EMPTY_EXECUTION_STATE,
+        }));
     };
 
     const renderResults = () => {
@@ -301,6 +335,7 @@ export default function ExploreTab(_props: EntityTabProps) {
             </PageHeader>
 
             <Card>
+                <QueryTabBar />
                 <CardHeader>
                     <CardHeaderCopy>
                         <Text weight="semiBold">{t('explore.editorTitle')}</Text>
@@ -313,8 +348,8 @@ export default function ExploreTab(_props: EntityTabProps) {
                         {...monacoTheme}
                         height={EDITOR_HEIGHT}
                         language="sql"
-                        value={query}
-                        onChange={(value) => setQuery(value ?? '')}
+                        value={activeTab.sql}
+                        onChange={(value) => updateTabSql(activeTab.id, value ?? '')}
                         options={{
                             minimap: { enabled: false },
                             automaticLayout: true,
@@ -327,14 +362,14 @@ export default function ExploreTab(_props: EntityTabProps) {
                     />
                 </EditorContainer>
                 <EditorActions>
-                    <Text size="sm">{t('explore.securityNotice')}</Text>
+                    <SecurityNotice size="sm">{t('explore.securityNotice')}</SecurityNotice>
                     <ButtonGroup>
                         <Button
                             variant="text"
                             size="sm"
                             icon={{ icon: Broom }}
                             onClick={clearQuery}
-                            disabled={!query && !result && !error}
+                            disabled={!activeTab.sql && !result && !error}
                         >
                             {t('explore.clear')}
                         </Button>
@@ -342,7 +377,7 @@ export default function ExploreTab(_props: EntityTabProps) {
                             size="sm"
                             icon={{ icon: Play, weight: 'fill' }}
                             onClick={runQuery}
-                            disabled={!urn || !query.trim() || isRunning}
+                            disabled={!urn || !activeTab.sql.trim() || isRunning}
                             isLoading={isRunning}
                             data-testid="explore-run-query"
                         >

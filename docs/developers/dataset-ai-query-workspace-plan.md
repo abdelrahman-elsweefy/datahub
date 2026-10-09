@@ -2,21 +2,24 @@
 
 ## Status
 
-Proposed. This document must be reviewed before implementation begins.
+Implemented as a local frontend and mock-service prototype. The interaction was simplified after
+UI review: Ask AI no longer targets or overwrites existing query tabs. Every structured SQL
+response stays in the conversation until the user selects **Open in Explore**.
 
 This design extends the dataset Explore experience described in
 [`dataset-explore-ui-plan.md`](dataset-explore-ui-plan.md). Explore remains responsible for editing
 and running SQL, while a new **Ask AI** dataset sidebar tab helps users understand an asset and
 create or revise queries. Query execution and AI processing remain separate services outside
-DataHub's GMS.
+DataHub's GMS. Users who want AI to revise SQL paste that SQL into the prompt; the revised result
+can then be opened in a new query tab.
 
 ## Goals
 
 - Add an **Ask AI** icon to the dataset profile's right vertical sidebar.
 - Give non-technical users a conversational way to ask questions about the current data asset.
 - Turn Explore into a multi-tab SQL workspace.
-- Create a new query tab for AI-generated SQL by default.
-- Allow a user to explicitly ask AI to revise one selected query tab.
+- Create a new query tab when the user opens AI-generated SQL in Explore.
+- Let users paste existing SQL into the prompt when they want a revision.
 - Keep generated SQL reviewable and require the user to run it explicitly.
 - Keep the frontend independent of a specific model, MCP server, or tool provider.
 - Preserve the existing query-service security boundary.
@@ -24,7 +27,7 @@ DataHub's GMS.
 ## Non-goals for the first version
 
 - Executing SQL from the Ask AI panel.
-- Allowing AI to modify more than one query tab in a single response.
+- Allowing AI to modify or overwrite an existing query tab.
 - Saving workspaces or conversations to a DataHub backend.
 - Sharing query workspaces between users.
 - Building the AI/MCP service as part of the DataHub GMS.
@@ -40,10 +43,9 @@ opens a panel in the same area used by Summary, Lineage, Columns, and Props.
 
 The panel contains:
 
-- A short explanation of what the assistant can do.
+- One **Ask AI** heading supplied by the sidebar, with a short explanation directly beneath it.
 - Suggested prompts when the conversation is empty.
 - A scrollable conversation history.
-- A SQL destination selector.
 - A multiline prompt field.
 - An **Ask** button.
 - Loading, unavailable-service, authorization, and recoverable error states.
@@ -51,19 +53,20 @@ The panel contains:
 Pressing `Enter` submits a non-empty prompt. Pressing `Shift+Enter` inserts a newline. The Ask
 button is disabled while a request is running.
 
-### SQL destination
+### New-tab-only SQL handoff
 
-Every request has an explicit destination:
-
-1. **New query tab**, which is always the default.
-2. **Modify an existing tab**, selected from the current dataset workspace.
-
-For a new-tab request, the frontend does not send the contents of unrelated query tabs. For a
-modify request, it sends only the ID, title, dialect, and current SQL of the selected tab.
+Every request uses the `NEW_TAB` target. The frontend never reads or sends the contents of existing
+query tabs automatically. When a user wants to revise a query, they paste the SQL into the prompt;
+that pasted text is sent as part of `question`. Returned SQL remains in the conversation until the
+user selects **Open in Explore**. This keeps existing work untouched and removes
+destination-selection complexity from the panel.
 
 ### AI-generated SQL
 
-When the service returns SQL for the default new-tab destination, the frontend:
+When the service returns SQL, the frontend displays it in the conversation with **Open in Explore**
+and **Copy SQL** actions. It does not create or activate a query tab automatically.
+
+When the user selects **Open in Explore**, the frontend:
 
 1. Creates a new query tab with a generated, editable title.
 2. Stores the returned SQL in that tab.
@@ -72,24 +75,15 @@ When the service returns SQL for the default new-tab destination, the frontend:
 5. Navigates the dataset's main content to Explore.
 6. Leaves execution to the user.
 
-The assistant message also displays the SQL with **Open in Explore** and **Copy SQL** actions.
 Repeated activation of **Open in Explore** focuses the already-created tab instead of creating a
 duplicate.
 
-### Modifying an existing tab
+### Revising SQL
 
-When the user selects an existing tab, the service returns a proposed replacement statement. The
-frontend does not immediately overwrite the tab. It displays a proposal with:
-
-- The target tab name.
-- The proposed SQL.
-- **Apply changes**.
-- **Create as new tab**.
-- **Discard**.
-
-Applying the proposal updates only the requested tab and marks it as modified. If the tab was
-closed or changed while the request was running, the proposal is not applied silently. The user
-can create a new tab from the proposal instead.
+The user may paste SQL into the multiline prompt together with instructions such as "add a
+seven-day filter." The full prompt is sent to the AI service as user-authored text. A structured SQL
+response follows the same user-triggered new-tab handoff as every other generated query; it never
+mutates the source tab.
 
 ### Query workspace tabs
 
@@ -114,8 +108,8 @@ per dataset to avoid accidental browser-storage growth.
 ## Frontend state model
 
 A dataset-scoped workspace provider must be mounted above both the main profile tab content and the
-right sidebar. This allows Ask AI to create or update query tabs even when Explore is not currently
-selected.
+right sidebar. This allows Ask AI to create a query tab after **Open in Explore** is selected, even
+when Explore is not currently selected.
 
 ```ts
 type QueryTabSource = "user" | "ai";
@@ -186,28 +180,14 @@ New-tab request:
 
 ```json
 {
-  "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)",
-  "question": "Show the number of events for each day",
+  "context": {
+    "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)",
+    "userUrn": "urn:li:corpuser:user1"
+  },
+  "question": "Add a seven-day filter to this query:\nSELECT event_date, COUNT(*) FROM my_schema.events GROUP BY event_date",
   "conversationId": null,
   "target": {
     "mode": "NEW_TAB"
-  }
-}
-```
-
-Modify-tab request:
-
-```json
-{
-  "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)",
-  "question": "Filter this to the last seven days",
-  "conversationId": "conversation-123",
-  "target": {
-    "mode": "MODIFY_TAB",
-    "tabId": "query-tab-2",
-    "title": "Daily events",
-    "dialect": "postgresql",
-    "currentSql": "SELECT event_date, COUNT(*) FROM my_schema.events GROUP BY event_date"
   }
 }
 ```
@@ -220,8 +200,7 @@ Successful response:
   "messageId": "message-456",
   "answer": "I added a seven-day filter while preserving the daily grouping.",
   "sqlAction": {
-    "type": "UPDATE_TAB",
-    "targetTabId": "query-tab-2",
+    "type": "CREATE_TAB",
     "title": "Daily events - last 7 days",
     "statement": "SELECT event_date, COUNT(*) FROM my_schema.events WHERE event_date >= CURRENT_DATE - INTERVAL '7 days' GROUP BY event_date",
     "dialect": "postgresql"
@@ -231,16 +210,9 @@ Successful response:
 ```
 
 `sqlAction` is optional because some questions require only a natural-language answer. The first
-version accepts at most one SQL action per response. The frontend never extracts executable SQL
-from Markdown; it uses only `sqlAction.statement`.
-
-Supported SQL action types are:
-
-- `CREATE_TAB`, valid for a `NEW_TAB` request.
-- `UPDATE_TAB`, valid for a `MODIFY_TAB` request and the requested tab ID.
-
-The frontend rejects mismatched or malformed actions and still displays the safe explanatory
-answer when possible.
+version accepts at most one `CREATE_TAB` SQL action per response. The frontend never extracts
+executable SQL from Markdown; it uses only `sqlAction.statement`. Other action types are ignored,
+while the safe explanatory answer is still displayed when possible.
 
 Errors use an HTTP status and a safe response body:
 
@@ -278,13 +250,14 @@ validation, dataset scope, row limits, timeouts, and user authorization.
 - AI-generated SQL is untrusted input.
 - Generated SQL is never run automatically.
 - The query service must validate AI-generated SQL exactly like user-written SQL.
-- The browser sends only the selected tab's SQL for modification requests.
+- The browser never reads or sends existing query-tab SQL automatically. SQL is included only when
+  the user explicitly pastes it into the prompt.
 - Database credentials and connection strings never enter browser state.
 - The frontend renders assistant text through safe Markdown components with raw HTML disabled.
 - Tool traces are not rendered unless the service returns an approved, user-facing source model.
 - Dataset access revocation must be enforced by both AI and query services on every request.
-- A model response cannot choose an arbitrary target tab; the frontend validates it against the
-  user's request and current workspace.
+- A model response cannot choose or overwrite an existing tab; only `CREATE_TAB` actions are
+  accepted.
 
 ## Component boundaries
 
@@ -293,7 +266,7 @@ The implementation should keep these responsibilities separate:
 - `DatasetQueryWorkspaceProvider`: tab state, persistence, and workspace actions.
 - `QueryTabBar`: tab creation, selection, rename, close, and modified indicators.
 - `ExploreTab`: editor and query results for the active query tab.
-- `AskAiSidebarTab`: conversation UI, destination selection, and SQL proposals.
+- `AskAiSidebarTab`: conversation UI and new-tab SQL handoff.
 - `aiService`: request and response transport, validation, and error normalization.
 - `queryService`: read-only query execution; it remains independent of AI behavior.
 
@@ -332,7 +305,8 @@ during implementation rather than introducing a parallel framework.
 ### Phase 3: Ask AI sidebar shell
 
 - Register the Ask AI sidebar icon and panel.
-- Add suggested prompts, conversation messages, prompt input, and destination selector.
+- Add one sidebar heading, an explanatory sentence, suggested prompts, conversation messages, and
+  prompt input.
 - Add keyboard behavior and accessible labels.
 - Add loading, empty, error, unauthorized, and unavailable-service states.
 - Add English localization keys following the existing locale structure.
@@ -346,14 +320,13 @@ during implementation rather than introducing a parallel framework.
 - Keep the panel usable when the service has not yet been deployed.
 - Unit test the transport and response-validation behavior.
 
-### Phase 5: SQL handoff and modification proposals
+### Phase 5: SQL handoff
 
 - Convert valid `CREATE_TAB` actions into new AI query tabs.
-- Navigate to Explore and activate the created tab.
+- Wait for **Open in Explore** before creating, activating, or navigating to a tab.
 - Make repeated **Open in Explore** actions idempotent.
-- Show `UPDATE_TAB` actions as proposals rather than immediate mutations.
-- Add **Apply changes**, **Create as new tab**, and **Discard** behavior.
-- Detect stale or closed target tabs before applying a proposal.
+- Ignore response actions that attempt to update an existing tab.
+- Let users request revisions by pasting SQL into the prompt; keep the result in a new tab.
 - Add **Copy SQL** without making clipboard access a requirement for the main flow.
 
 ### Phase 6: verification and documentation
@@ -383,12 +356,12 @@ High-value frontend tests include:
 - Closing the active tab selects a deterministic neighboring tab.
 - The last tab cannot leave the workspace empty.
 - Invalid persisted state produces a clean workspace instead of crashing.
-- A new-tab AI request excludes unrelated query SQL.
-- A modify request includes only the selected tab.
-- A valid `CREATE_TAB` response creates and activates one tab.
+- An AI request excludes unrelated query-tab SQL.
+- Pasted SQL remains part of the exact user-authored `question`.
+- A valid `CREATE_TAB` response does not alter the workspace until **Open in Explore** is selected.
+- Selecting **Open in Explore** creates and activates one tab.
 - Reopening the same AI response does not duplicate its tab.
-- An `UPDATE_TAB` response cannot modify a different tab.
-- A stale update proposal does not overwrite newer user changes.
+- An `UPDATE_TAB` response is ignored and cannot overwrite existing work.
 - Service errors preserve the prompt and all query tabs.
 - Generated SQL is never executed without a separate user action.
 
@@ -402,9 +375,10 @@ behavior and security boundaries rather than editor-library implementation detai
 - Ask AI receives the exact current dataset URN.
 - Explore supports multiple independently editable query tabs.
 - A user can create, switch, rename, and close tabs without losing other tab contents.
-- AI-generated SQL creates a new tab by default and opens it in Explore.
-- A user can explicitly select one tab for an AI modification request.
-- Existing tabs are not overwritten without an explicit apply action.
+- AI-generated SQL stays in Ask AI until the user selects **Open in Explore**.
+- **Open in Explore** creates a new tab and activates it.
+- A user can paste SQL into the prompt to request a revision.
+- Existing tabs are never overwritten by Ask AI.
 - Generated SQL is never run automatically.
 - Ask AI and Explore remain usable while the AI service is unavailable.
 - The browser never receives database, model, MCP, or service credentials.
@@ -417,9 +391,7 @@ behavior and security boundaries rather than editor-library implementation detai
 - **Nested tabs may be confusing:** call them query tabs, keep them visually inside Explore, and
   preserve the existing dataset-level Explore tab styling.
 - **AI may return unsafe SQL:** never auto-run it and keep query-service validation authoritative.
-- **AI may overwrite user work:** use new-tab behavior by default and proposal-based updates.
-- **A response may arrive after the target changed:** compare the requested tab ID and SQL revision
-  before enabling Apply.
+- **AI may overwrite user work:** accept only new-tab actions and never mutate existing tabs.
 - **Browser storage may contain invalid or old data:** version and validate persisted state.
 - **Conversation context may grow without bounds:** limit retained messages and let the service
   enforce request-size limits.
