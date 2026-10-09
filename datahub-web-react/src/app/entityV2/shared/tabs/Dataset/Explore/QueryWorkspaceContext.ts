@@ -16,6 +16,7 @@ export type QueryWorkspaceContextValue = {
     renameTab: (tabId: string, title: string) => void;
     closeTab: (tabId: string) => void;
     setActiveTab: (tabId: string) => void;
+    setTabConnection: (tabId: string, connectionId: string, initialize?: boolean) => void;
 };
 
 export const QueryWorkspaceContext = createContext<QueryWorkspaceContextValue | null>(null);

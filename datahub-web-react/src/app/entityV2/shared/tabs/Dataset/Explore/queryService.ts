@@ -2,6 +2,8 @@ import {
     DatasetQueryRequest,
     DatasetQueryResult,
     QueryColumn,
+    QueryConnection,
+    QueryConnectionsResult,
     QueryResultRow,
 } from '@app/entityV2/shared/tabs/Dataset/Explore/types';
 import { resolveRuntimePath } from '@utils/runtimeBasePath';
@@ -83,6 +85,7 @@ function normalizeResponse(value: unknown): DatasetQueryResult {
         executionTimeMs: typeof value.executionTimeMs === 'number' ? value.executionTimeMs : undefined,
         truncated: value.truncated === true,
         queryId: typeof value.queryId === 'string' ? value.queryId : undefined,
+        connectionId: typeof value.connectionId === 'string' ? value.connectionId : undefined,
     };
 }
 
@@ -95,17 +98,7 @@ async function getErrorPayload(response: Response): Promise<ErrorPayload> {
     }
 }
 
-export async function runDatasetQuery(request: DatasetQueryRequest, signal?: AbortSignal): Promise<DatasetQueryResult> {
-    const response = await fetch(resolveRuntimePath(QUERY_SERVICE_PATH), {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-        signal,
-    });
-
+async function checkResponse(response: Response): Promise<void> {
     if (!response.ok) {
         const payload = await getErrorPayload(response);
         const message =
@@ -118,6 +111,53 @@ export async function runDatasetQuery(request: DatasetQueryRequest, signal?: Abo
             typeof payload.code === 'string' ? payload.code : undefined,
         );
     }
+}
 
+export async function getQueryConnections(datasetUrn: string, signal?: AbortSignal): Promise<QueryConnectionsResult> {
+    const response = await fetch(
+        `${resolveRuntimePath('/query-service/v1/connections')}?datasetUrn=${encodeURIComponent(datasetUrn)}`,
+        { credentials: 'same-origin', signal },
+    );
+    await checkResponse(response);
+    const value: unknown = await response.json();
+    if (!isRecord(value) || !Array.isArray(value.connections)) {
+        throw new QueryServiceError('The query service returned an invalid connection list.', 502);
+    }
+    const connections = value.connections.map((item): QueryConnection => {
+        if (
+            !isRecord(item) ||
+            typeof item.id !== 'string' ||
+            !item.id ||
+            typeof item.label !== 'string' ||
+            typeof item.platform !== 'string' ||
+            typeof item.database !== 'string'
+        ) {
+            throw new QueryServiceError('The query service returned an invalid connection.', 502);
+        }
+        return { id: item.id, label: item.label, platform: item.platform, database: item.database };
+    });
+    return {
+        connections,
+        defaultConnectionId:
+            typeof value.defaultConnectionId === 'string' &&
+            connections.some((item) => item.id === value.defaultConnectionId)
+                ? value.defaultConnectionId
+                : undefined,
+        maxRows:
+            typeof value.maxRows === 'number' && Number.isInteger(value.maxRows) && value.maxRows > 0
+                ? value.maxRows
+                : 100,
+    };
+}
+
+export async function runDatasetQuery(request: DatasetQueryRequest, signal?: AbortSignal): Promise<DatasetQueryResult> {
+    const response = await fetch(resolveRuntimePath(QUERY_SERVICE_PATH), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal,
+    });
+    await checkResponse(response);
     return normalizeResponse(await response.json());
 }

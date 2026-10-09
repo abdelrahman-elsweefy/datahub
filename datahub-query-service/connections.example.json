@@ -1,0 +1,9 @@
+{
+  "connections": [],
+  "maxRows": 100,
+  "maxResultBytes": 4194304,
+  "timeoutSeconds": 30,
+  "maxConcurrentQueries": 10,
+  "poolSize": 4,
+  "datahubGraphqlUrl": "http://datahub-gms:8080/api/graphql"
+}

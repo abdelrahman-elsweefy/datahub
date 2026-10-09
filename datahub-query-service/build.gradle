@@ -1,0 +1,59 @@
+plugins {
+  id 'base'
+}
+
+apply from: '../gradle/versioning/versioning.gradle'
+apply from: '../gradle/python/python-uv.gradle'
+apply from: '../gradle/docker/docker.gradle'
+
+def servicePython = project.findProperty('queryServicePython') ?: 'python3.11'
+def python = "${projectDir}/venv/bin/python"
+
+tasks.register('environmentSetup', Exec) {
+  inputs.file 'pyproject.toml'
+  outputs.file 'venv/bin/python'
+  commandLine servicePython, '-m', 'venv', "${projectDir}/venv"
+}
+
+tasks.register('installDev', Exec) {
+  dependsOn 'environmentSetup'
+  inputs.file 'pyproject.toml'
+  outputs.file 'venv/.installed'
+  commandLine 'bash', '-c', "${python} -m pip install -e '.[dev]' && touch venv/.installed"
+}
+
+tasks.register('lint', Exec) {
+  dependsOn 'installDev'
+  commandLine 'bash', '-c', "${python} -m ruff check . && ${python} -m ruff format --check . && ${python} -m mypy src tests"
+}
+
+tasks.register('lintFix', Exec) {
+  dependsOn 'installDev'
+  commandLine 'bash', '-c', "${python} -m ruff check --fix . && ${python} -m ruff format ."
+}
+
+tasks.register('test', Exec) {
+  dependsOn 'installDev'
+  commandLine python, '-m', 'pytest', '-m', 'not integration', '--junitxml=build/test-results/unit.xml'
+}
+
+tasks.register('testIntegration', Exec) {
+  dependsOn 'installDev'
+  commandLine python, '-m', 'pytest', '-m', 'integration', '--junitxml=build/test-results/integration.xml'
+}
+
+docker {
+  name "${docker_registry}/datahub-query-service:${versionTag}"
+  dockerfile file("${rootProject.projectDir}/docker/datahub-query-service/Dockerfile")
+  files fileTree(rootProject.projectDir) {
+    include 'datahub-query-service/pyproject.toml'
+    include 'datahub-query-service/src/**'
+    include 'datahub-query-service/connections.example.json'
+    include 'docker/datahub-query-service/Dockerfile'
+    include '.dockerignore'
+  }
+  additionalTag('Debug', "${docker_registry}/datahub-query-service:debug")
+}
+
+check.dependsOn 'lint', 'test'
+clean { delete 'venv' }

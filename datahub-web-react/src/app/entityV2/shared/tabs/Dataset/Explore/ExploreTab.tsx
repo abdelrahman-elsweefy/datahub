@@ -1,4 +1,4 @@
-import { Alert, Button, Column, EmptyState, Loader, Pill, Table, Text } from '@components';
+import { Alert, Button, Column, EmptyState, Loader, Pill, SimpleSelect, Table, Text } from '@components';
 import Editor from '@monaco-editor/react';
 import { Broom } from '@phosphor-icons/react/dist/csr/Broom';
 import { Database } from '@phosphor-icons/react/dist/csr/Database';
@@ -11,8 +11,16 @@ import styled from 'styled-components';
 import { useEntityData } from '@app/entity/shared/EntityContext';
 import QueryTabBar from '@app/entityV2/shared/tabs/Dataset/Explore/QueryTabBar';
 import { useQueryWorkspace } from '@app/entityV2/shared/tabs/Dataset/Explore/QueryWorkspaceContext';
-import { QueryServiceError, runDatasetQuery } from '@app/entityV2/shared/tabs/Dataset/Explore/queryService';
-import { DatasetQueryResult, QueryResultRow } from '@app/entityV2/shared/tabs/Dataset/Explore/types';
+import {
+    QueryServiceError,
+    getQueryConnections,
+    runDatasetQuery,
+} from '@app/entityV2/shared/tabs/Dataset/Explore/queryService';
+import {
+    DatasetQueryResult,
+    QueryConnectionsResult,
+    QueryResultRow,
+} from '@app/entityV2/shared/tabs/Dataset/Explore/types';
 import { EntityTabProps } from '@app/entityV2/shared/types';
 import { useMonacoTheme } from '@app/theme/useMonacoTheme';
 
@@ -23,6 +31,7 @@ type TabExecutionState = {
     result: DatasetQueryResult | null;
     error: Error | null;
     isRunning: boolean;
+    connectionLabel?: string;
 };
 
 const EMPTY_EXECUTION_STATE: TabExecutionState = {
@@ -183,13 +192,54 @@ export default function ExploreTab(_props: EntityTabProps) {
     const { t } = useTranslation('entity.profile.queries');
     const { urn, entityData } = useEntityData();
     const monacoTheme = useMonacoTheme();
-    const { workspace, activeTab, initializeTabSql, updateTabSql } = useQueryWorkspace();
+    const { workspace, activeTab, initializeTabSql, updateTabSql, setTabConnection } = useQueryWorkspace();
     const abortControllers = useRef<Record<string, AbortController>>({});
     const [executionByTabId, setExecutionByTabId] = useState<Record<string, TabExecutionState>>({});
+    const [connections, setConnections] = useState<QueryConnectionsResult>({ connections: [], maxRows: DEFAULT_LIMIT });
+    const [connectionsLoading, setConnectionsLoading] = useState(true);
+    const [connectionsError, setConnectionsError] = useState<Error | null>(null);
+    const [connectionsRefresh, setConnectionsRefresh] = useState(0);
+    const selectedConnection = connections.connections.find((connection) => connection.id === activeTab.connectionId);
 
     const entityName = entityData?.properties?.qualifiedName || entityData?.properties?.name || entityData?.name;
     const execution = executionByTabId[activeTab.id] || EMPTY_EXECUTION_STATE;
     const { result, error, isRunning } = execution;
+
+    useEffect(() => {
+        const controller = new AbortController();
+        setConnectionsLoading(true);
+        setConnectionsError(null);
+        getQueryConnections(urn, controller.signal)
+            .then(setConnections)
+            .catch((requestError: unknown) => {
+                if (!controller.signal.aborted) {
+                    setConnections({ connections: [], maxRows: DEFAULT_LIMIT });
+                    setConnectionsError(
+                        requestError instanceof Error ? requestError : new Error(t('explore.unexpectedError')),
+                    );
+                }
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setConnectionsLoading(false);
+            });
+        return () => controller.abort();
+    }, [urn, connectionsRefresh, t]);
+
+    useEffect(() => {
+        if (connections.defaultConnectionId && !activeTab.connectionId) {
+            setTabConnection(activeTab.id, connections.defaultConnectionId, true);
+        }
+    }, [activeTab.id, activeTab.connectionId, connections.defaultConnectionId, setTabConnection]);
+
+    useEffect(() => {
+        const openTabIds = new Set(workspace.tabs.map((tab) => tab.id));
+        Object.entries(abortControllers.current).forEach(([tabId, controller]) => {
+            if (!openTabIds.has(tabId)) {
+                controller.abort();
+                delete abortControllers.current[tabId];
+            }
+        });
+    }, [workspace.tabs]);
 
     useEffect(() => {
         const isInitialTab = workspace.tabs[0]?.id === activeTab.id;
@@ -229,7 +279,7 @@ export default function ExploreTab(_props: EntityTabProps) {
     const runQuery = async () => {
         const sql = activeTab.sql.trim();
         const tabId = activeTab.id;
-        if (!urn || !sql || isRunning) {
+        if (!urn || !sql || isRunning || !selectedConnection || connectionsLoading) {
             return;
         }
 
@@ -238,17 +288,31 @@ export default function ExploreTab(_props: EntityTabProps) {
         abortControllers.current[tabId] = controller;
         setExecutionByTabId((current) => ({
             ...current,
-            [tabId]: { result: current[tabId]?.result || null, error: null, isRunning: true },
+            [tabId]: {
+                result: current[tabId]?.result || null,
+                error: null,
+                isRunning: true,
+                connectionLabel: selectedConnection.label,
+            },
         }));
 
         try {
-            const nextResult = await runDatasetQuery({ datasetUrn: urn, sql }, controller.signal);
+            const nextResult = await runDatasetQuery(
+                { datasetUrn: urn, sql, connectionId: selectedConnection.id },
+                controller.signal,
+            );
+            if (controller.signal.aborted) return;
             setExecutionByTabId((current) => ({
                 ...current,
-                [tabId]: { result: nextResult, error: null, isRunning: false },
+                [tabId]: {
+                    result: nextResult,
+                    error: null,
+                    isRunning: false,
+                    connectionLabel: selectedConnection.label,
+                },
             }));
         } catch (requestError) {
-            if (requestError instanceof DOMException && requestError.name === 'AbortError') {
+            if (controller.signal.aborted) {
                 return;
             }
             setExecutionByTabId((current) => ({
@@ -257,6 +321,7 @@ export default function ExploreTab(_props: EntityTabProps) {
                     result: null,
                     error: requestError instanceof Error ? requestError : new Error(t('explore.unexpectedError')),
                     isRunning: false,
+                    connectionLabel: selectedConnection.label,
                 },
             }));
         } finally {
@@ -274,6 +339,13 @@ export default function ExploreTab(_props: EntityTabProps) {
             ...current,
             [activeTab.id]: EMPTY_EXECUTION_STATE,
         }));
+    };
+
+    const changeConnection = (values: string[]) => {
+        const connectionId = values?.[0];
+        if (!connectionId || connectionId === activeTab.connectionId || isRunning) return;
+        setTabConnection(activeTab.id, connectionId);
+        setExecutionByTabId((current) => ({ ...current, [activeTab.id]: EMPTY_EXECUTION_STATE }));
     };
 
     const renderResults = () => {
@@ -337,11 +409,47 @@ export default function ExploreTab(_props: EntityTabProps) {
             <Card>
                 <QueryTabBar />
                 <CardHeader>
+                    <SimpleSelect
+                        label={t('explore.connectionLabel')}
+                        placeholder={t('explore.connectionPlaceholder')}
+                        options={connections.connections.map((connection) => ({
+                            value: connection.id,
+                            label: connection.label,
+                            description: connection.database,
+                        }))}
+                        values={selectedConnection ? [selectedConnection.id] : []}
+                        onUpdate={changeConnection}
+                        isDisabled={isRunning || connectionsLoading || connections.connections.length === 0}
+                        isLoading={connectionsLoading}
+                        showClear={false}
+                        showSearch
+                        showDescriptions
+                        width="full"
+                        dataTestId="explore-connection-select"
+                    />
+                    {!connectionsLoading && !connectionsError && !selectedConnection && (
+                        <Text size="sm">
+                            {t(connections.connections.length ? 'explore.connectionChoose' : 'explore.connectionEmpty')}
+                        </Text>
+                    )}
+                    {connectionsError && (
+                        <Alert
+                            variant="error"
+                            title={t('explore.serviceErrorTitle')}
+                            description={connectionsError.message}
+                            action={{
+                                label: t('explore.retry'),
+                                onClick: () => setConnectionsRefresh((value) => value + 1),
+                            }}
+                        />
+                    )}
+                </CardHeader>
+                <CardHeader>
                     <CardHeaderCopy>
                         <Text weight="semiBold">{t('explore.editorTitle')}</Text>
                         {entityName && <Text size="sm">{entityName}</Text>}
                     </CardHeaderCopy>
-                    <Text size="sm">{t('explore.limitNotice', { limit: DEFAULT_LIMIT })}</Text>
+                    <Text size="sm">{t('explore.limitNotice', { limit: connections.maxRows })}</Text>
                 </CardHeader>
                 <EditorContainer>
                     <Editor
@@ -377,7 +485,9 @@ export default function ExploreTab(_props: EntityTabProps) {
                             size="sm"
                             icon={{ icon: Play, weight: 'fill' }}
                             onClick={runQuery}
-                            disabled={!urn || !activeTab.sql.trim() || isRunning}
+                            disabled={
+                                !urn || !activeTab.sql.trim() || isRunning || connectionsLoading || !selectedConnection
+                            }
                             isLoading={isRunning}
                             data-testid="explore-run-query"
                         >
@@ -391,6 +501,7 @@ export default function ExploreTab(_props: EntityTabProps) {
                 <CardHeader>
                     <CardHeaderCopy>
                         <Text weight="semiBold">{t('explore.resultsTitle')}</Text>
+                        {execution.connectionLabel && <Text size="sm">{execution.connectionLabel}</Text>}
                         {result && !isRunning && (
                             <Text size="sm">
                                 {result.executionTimeMs === undefined

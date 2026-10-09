@@ -14,6 +14,25 @@ function initialWorkspace() {
 }
 
 describe('queryWorkspaceReducer', () => {
+    it('stores connections per tab and prevents a late default from replacing a user choice', () => {
+        let workspace = queryWorkspaceReducer(initialWorkspace(), {
+            type: 'SET_CONNECTION',
+            tabId: 'tab-1',
+            connectionId: 'analytics',
+        });
+        workspace = queryWorkspaceReducer(workspace, {
+            type: 'ADD_TAB',
+            tab: createQueryTab('tab-2', 'Query 2', { connectionId: 'reporting' }, 2),
+        });
+        workspace = queryWorkspaceReducer(workspace, {
+            type: 'SET_CONNECTION',
+            tabId: 'tab-1',
+            connectionId: 'default',
+            initialize: true,
+        });
+        expect(workspace.tabs.map((tab) => tab.connectionId)).toEqual(['analytics', 'reporting']);
+        expect(restoreQueryWorkspace(JSON.stringify(workspace), DATASET_URN)).toEqual(workspace);
+    });
     it('keeps SQL isolated while switching between tabs', () => {
         const firstWorkspace = queryWorkspaceReducer(initialWorkspace(), {
             type: 'UPDATE_SQL',

@@ -77,7 +77,13 @@ export function QueryWorkspaceProvider({ datasetUrn, children }: Props) {
             if (currentWorkspace.tabs.length >= MAX_QUERY_TABS) {
                 return null;
             }
-            const tab = createQueryTab(generateTabId(), getNextTabTitle(currentWorkspace.tabs), input);
+            const currentConnectionId = currentWorkspace.tabs.find(
+                (tab) => tab.id === currentWorkspace.activeTabId,
+            )?.connectionId;
+            const tab = createQueryTab(generateTabId(), getNextTabTitle(currentWorkspace.tabs), {
+                ...input,
+                connectionId: input.connectionId || (input.source === 'ai' ? undefined : currentConnectionId),
+            });
             dispatch({ type: 'ADD_TAB', tab });
             return tab;
         };
@@ -92,6 +98,8 @@ export function QueryWorkspaceProvider({ datasetUrn, children }: Props) {
             renameTab: (tabId, title) => dispatch({ type: 'RENAME_TAB', tabId, title }),
             closeTab: (tabId) => dispatch({ type: 'CLOSE_TAB', tabId }),
             setActiveTab: (tabId) => dispatch({ type: 'SET_ACTIVE_TAB', tabId }),
+            setTabConnection: (tabId, connectionId, initialize) =>
+                dispatch({ type: 'SET_CONNECTION', tabId, connectionId, initialize }),
         };
     }, [workspace]);
 

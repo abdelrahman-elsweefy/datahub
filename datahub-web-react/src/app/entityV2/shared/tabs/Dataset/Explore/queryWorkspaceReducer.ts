@@ -14,7 +14,8 @@ export type QueryWorkspaceAction =
     | { type: 'UPDATE_SQL'; tabId: string; sql: string }
     | { type: 'RENAME_TAB'; tabId: string; title: string }
     | { type: 'CLOSE_TAB'; tabId: string }
-    | { type: 'SET_ACTIVE_TAB'; tabId: string };
+    | { type: 'SET_ACTIVE_TAB'; tabId: string }
+    | { type: 'SET_CONNECTION'; tabId: string; connectionId: string; initialize?: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -29,7 +30,8 @@ function normalizePersistedTab(value: unknown): QueryTab | null {
         return null;
     }
 
-    const { id, title, sql, dialect, source, sourceMessageId, isDirty, revision, createdAt, updatedAt } = value;
+    const { id, title, sql, dialect, connectionId, source, sourceMessageId, isDirty, revision, createdAt, updatedAt } =
+        value;
     if (
         typeof id !== 'string' ||
         !id ||
@@ -37,6 +39,7 @@ function normalizePersistedTab(value: unknown): QueryTab | null {
         !title ||
         typeof sql !== 'string' ||
         typeof dialect !== 'string' ||
+        (connectionId !== undefined && (typeof connectionId !== 'string' || !connectionId)) ||
         !isQueryTabSource(source) ||
         typeof isDirty !== 'boolean' ||
         typeof revision !== 'number' ||
@@ -51,6 +54,7 @@ function normalizePersistedTab(value: unknown): QueryTab | null {
         title,
         sql,
         dialect,
+        connectionId: typeof connectionId === 'string' ? connectionId : undefined,
         source,
         sourceMessageId: typeof sourceMessageId === 'string' ? sourceMessageId : undefined,
         isDirty,
@@ -70,6 +74,7 @@ export function createQueryTab(id: string, title: string, input: CreateQueryTabI
         title: input.title?.trim() || title,
         sql: input.sql || '',
         dialect: input.dialect || 'sql',
+        connectionId: input.connectionId,
         source: input.source || 'user',
         sourceMessageId: input.sourceMessageId,
         isDirty: input.isDirty ?? Boolean(input.sql),
@@ -123,6 +128,22 @@ export function restoreQueryWorkspace(value: string | null, datasetUrn: string):
 
 export function queryWorkspaceReducer(state: QueryWorkspace, action: QueryWorkspaceAction): QueryWorkspace {
     switch (action.type) {
+        case 'SET_CONNECTION':
+            return {
+                ...state,
+                tabs: state.tabs.map((tab) =>
+                    tab.id === action.tabId &&
+                    !(action.initialize && tab.connectionId) &&
+                    tab.connectionId !== action.connectionId
+                        ? {
+                              ...tab,
+                              connectionId: action.connectionId,
+                              revision: tab.revision + (action.initialize ? 0 : 1),
+                              updatedAt: Date.now(),
+                          }
+                        : tab,
+                ),
+            };
         case 'ADD_TAB':
             if (state.tabs.length >= MAX_QUERY_TABS || state.tabs.some((tab) => tab.id === action.tab.id)) {
                 return state;

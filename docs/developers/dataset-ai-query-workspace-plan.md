@@ -243,7 +243,7 @@ The future independent service will:
 
 The service may explain metadata, suggest joins, or produce SQL using approved tools. The query
 service remains the only component that may execute SQL and remains authoritative for read-only
-validation, dataset scope, row limits, timeouts, and user authorization.
+validation, connection access, row limits, timeouts, and user authorization.
 
 ## Security and privacy boundaries
 

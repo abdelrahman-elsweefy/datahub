@@ -18,6 +18,7 @@ ext {
     ]
 
     python_services_modules = [
+        ':datahub-query-service',
     ]
 
     // Load environment variables from file if DATAHUB_LOCAL_COMMON_ENV is set
@@ -85,6 +86,7 @@ ext {
 
         def signingKey = System.getenv("DATAHUB_TOKEN_SERVICE_SIGNING_KEY") ?: persisted["DATAHUB_TOKEN_SERVICE_SIGNING_KEY"]
         def salt = System.getenv("DATAHUB_TOKEN_SERVICE_SALT") ?: persisted["DATAHUB_TOKEN_SERVICE_SALT"]
+        def queryProxySecret = System.getenv("DATAHUB_QUERY_SERVICE_PROXY_SECRET") ?: persisted["DATAHUB_QUERY_SERVICE_PROXY_SECRET"]
 
         def generated = false
         if (!signingKey) {
@@ -101,12 +103,18 @@ ext {
         }
 
         // Persist to file so the same values survive quickstartDown / reloadEnv cycles
+        if (!queryProxySecret) {
+            def bytes = new byte[32]
+            new java.security.SecureRandom().nextBytes(bytes)
+            queryProxySecret = Base64.encoder.encodeToString(bytes)
+            generated = true
+        }
         if (generated) {
-            tokenSecretsFile.text = "# Auto-generated local dev secrets — do not commit\nDATAHUB_TOKEN_SERVICE_SIGNING_KEY=${signingKey}\nDATAHUB_TOKEN_SERVICE_SALT=${salt}\n"
+            tokenSecretsFile.text = "# Auto-generated local dev secrets — do not commit\nDATAHUB_TOKEN_SERVICE_SIGNING_KEY=${signingKey}\nDATAHUB_TOKEN_SERVICE_SALT=${salt}\nDATAHUB_QUERY_SERVICE_PROXY_SECRET=${queryProxySecret}\n"
             logger.lifecycle("Generated token service secrets saved to ${tokenSecretsFile.path} for reuse across restarts")
         }
 
-        return [DATAHUB_TOKEN_SERVICE_SIGNING_KEY: signingKey, DATAHUB_TOKEN_SERVICE_SALT: salt]
+        return [DATAHUB_TOKEN_SERVICE_SIGNING_KEY: signingKey, DATAHUB_TOKEN_SERVICE_SALT: salt, DATAHUB_QUERY_SERVICE_PROXY_SECRET: queryProxySecret]
     }
 
     // Common configuration for all tasks
@@ -338,6 +346,7 @@ ext {
     ]
     // Though these support hot reload, they need to be restarted if any ENVs have been modified and ReloadEnv is run.
     moduleToContainerWithHotReload = [
+        ':datahub-query-service': 'datahub-query-service',
         ':datahub-actions': 'datahub-actions',
     ]
 

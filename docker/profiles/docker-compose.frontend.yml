@@ -22,6 +22,8 @@ x-datahub-frontend-service: &datahub-frontend-service
     DATAHUB_BASE_PATH: ${DATAHUB_BASE_PATH:-/}
     DATAHUB_GMS_BASE_PATH: ${DATAHUB_GMS_BASE_PATH:-/}
     LOG_AGGREGATOR_ENDPOINT: ${LOG_AGGREGATOR_ENDPOINT:-}
+    DATAHUB_QUERY_SERVICE_URL: ${DATAHUB_QUERY_SERVICE_URL:-http://datahub-query-service:9004}
+    DATAHUB_QUERY_SERVICE_PROXY_SECRET: ${DATAHUB_QUERY_SERVICE_PROXY_SECRET:-}
   volumes:
     - ${HOME}/.datahub/plugins:/etc/datahub/plugins
 

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=78.1.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datahub-query-service"
+version = "0.1.0"
+description = "Read-only database query execution for DataHub Explore"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<0.129",
+    "httpx>=0.28,<0.29",
+    "pglast>=7,<8",
+    "psycopg[binary,pool]>=3.2,<3.4",
+    "pydantic>=2.10,<3",
+    "uvicorn>=0.34,<0.42",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.25,<2", "ruff==0.15.22", "mypy>=1.15,<2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+exclude = ["venv", "build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+untyped_calls_exclude = ["pglast"]
+
+[[tool.mypy.overrides]]
+module = ["pglast", "pglast.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = ["integration: requires QUERY_SERVICE_TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]

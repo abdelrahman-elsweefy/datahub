@@ -417,12 +417,17 @@ def _default_config() -> DevToolingConfig:
                 "datahub-mae-consumer",
             ),
             "metadata-io/": (":metadata-service:war:bootJar", "datahub-gms"),
+            "datahub-query-service/": (
+                ":datahub-query-service:dockerPrepare",
+                "datahub-query-service",
+            ),
         },
         rebuild_module_aliases={
             "gms": "datahub-gms",
             "frontend": "datahub-frontend-react",
             "mce": "datahub-mce-consumer",
             "mae": "datahub-mae-consumer",
+            "query-service": "datahub-query-service",
         },
         services=[
             ServiceConfig(
@@ -432,6 +437,11 @@ def _default_config() -> DevToolingConfig:
                 required=True,
             ),
             ServiceConfig("frontend", f"{_frontend_url()}/admin", required=True),
+            ServiceConfig(
+                "query-service",
+                f"{_frontend_url()}/query-service/health",
+                required=False,
+            ),
         ],
         gradle_reload_task=":docker:reload",
         gradle_reload_env_task=":docker:reloadEnv",
@@ -691,7 +701,9 @@ def _suggest_recovery(
     if all_down:
         return "All services are down. Try: python3 scripts/dev/datahub_dev.py nuke --keep-data"
     if any_crash_loop:
-        return "Services are crash-looping. Try: python3 scripts/dev/datahub_dev.py reset"
+        return (
+            "Services are crash-looping. Try: python3 scripts/dev/datahub_dev.py reset"
+        )
     if any_bad_exit:
         return "Some services have exited with errors. Try: python3 scripts/dev/datahub_dev.py reset"
     if not gms_ok:

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     QUERY_SERVICE_PATH,
     QueryServiceError,
+    getQueryConnections,
     runDatasetQuery,
 } from '@app/entityV2/shared/tabs/Dataset/Explore/queryService';
 
@@ -46,7 +47,11 @@ describe('runDatasetQuery', () => {
             }),
         );
 
-        const result = await runDatasetQuery({ datasetUrn: DATASET_URN, sql: 'SELECT * FROM my_schema.events' });
+        const result = await runDatasetQuery({
+            datasetUrn: DATASET_URN,
+            sql: 'SELECT * FROM my_schema.events',
+            connectionId: 'analytics',
+        });
 
         expect(global.fetch).toHaveBeenCalledWith(
             QUERY_SERVICE_PATH,
@@ -56,6 +61,7 @@ describe('runDatasetQuery', () => {
                 body: JSON.stringify({
                     datasetUrn: DATASET_URN,
                     sql: 'SELECT * FROM my_schema.events',
+                    connectionId: 'analytics',
                 }),
             }),
         );
@@ -70,11 +76,30 @@ describe('runDatasetQuery', () => {
                 responseWith({ detail: 'Only read-only queries are allowed', code: 'READ_ONLY' }, false, 400),
             );
 
-        await expect(runDatasetQuery({ datasetUrn: DATASET_URN, sql: 'DELETE FROM events' })).rejects.toMatchObject({
+        await expect(
+            runDatasetQuery({ datasetUrn: DATASET_URN, sql: 'DELETE FROM events', connectionId: 'analytics' }),
+        ).rejects.toMatchObject({
             name: QueryServiceError.name,
             message: 'Only read-only queries are allowed',
             status: 400,
             code: 'READ_ONLY',
         });
+    });
+
+    it('keeps an ambiguous or inaccessible default unselected', async () => {
+        global.fetch = vi.fn().mockResolvedValue(
+            responseWith({
+                connections: [{ id: 'analytics', label: 'Analytics', platform: 'postgres', database: 'my_db' }],
+                defaultConnectionId: 'inaccessible',
+                maxRows: 200,
+            }),
+        );
+        const result = await getQueryConnections(DATASET_URN);
+        expect(result.defaultConnectionId).toBeUndefined();
+        expect(result.maxRows).toBe(200);
+        expect(global.fetch).toHaveBeenCalledWith(
+            expect.stringContaining(encodeURIComponent(DATASET_URN)),
+            expect.objectContaining({ credentials: 'same-origin' }),
+        );
     });
 });

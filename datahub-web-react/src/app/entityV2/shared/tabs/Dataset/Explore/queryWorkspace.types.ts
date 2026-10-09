@@ -5,6 +5,7 @@ export type QueryTab = {
     title: string;
     sql: string;
     dialect: string;
+    connectionId?: string;
     source: QueryTabSource;
     sourceMessageId?: string;
     isDirty: boolean;
@@ -24,6 +25,7 @@ export type CreateQueryTabInput = {
     title?: string;
     sql?: string;
     dialect?: string;
+    connectionId?: string;
     source?: QueryTabSource;
     sourceMessageId?: string;
     isDirty?: boolean;

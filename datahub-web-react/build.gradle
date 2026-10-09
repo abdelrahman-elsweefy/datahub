@@ -132,6 +132,9 @@ task yarnPreview(type: YarnTask, dependsOn: [yarnInstall, yarnGenerate, generate
 task yarnTest(type: YarnTask, dependsOn: [yarnInstall, yarnGenerate, generateLazyIconStubs]) {
   // Explicitly runs in non-watch mode.
   def testArgs = ['run', project.hasProperty('withCoverage') ? 'test-coverage' : 'test', 'run']
+  if (project.hasProperty('testFile')) {
+    testArgs.add(project.property('testFile'))
+  }
 
   // Support vitest sharding for CI parallelism (e.g. -PvitestShard=1/3)
   if (project.hasProperty('vitestShard')) {
@@ -139,6 +142,7 @@ task yarnTest(type: YarnTask, dependsOn: [yarnInstall, yarnGenerate, generateLaz
   }
 
   args = testArgs
+  inputs.property('testFile', project.findProperty('testFile') ?: '')
   def test_sentinel = "${buildDir}/.yarn-test-sentinel"
   outputs.file(test_sentinel)
   inputs.files(project.fileTree(dir: 'src', include: ['**/*.ts', '**/*.tsx']))

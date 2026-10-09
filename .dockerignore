@@ -23,3 +23,5 @@ out
 /metadata-ingestion/tests
 /metadata-ingestion/examples
 /metadata-ingestion/docs
+/datahub-query-service/secrets
+/datahub-query-service/connections.local.json

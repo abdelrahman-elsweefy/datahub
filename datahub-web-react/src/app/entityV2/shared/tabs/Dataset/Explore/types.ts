@@ -12,9 +12,24 @@ export type DatasetQueryResult = {
     executionTimeMs?: number;
     truncated: boolean;
     queryId?: string;
+    connectionId?: string;
 };
 
 export type DatasetQueryRequest = {
     datasetUrn: string;
     sql: string;
+    connectionId: string;
+};
+
+export type QueryConnection = {
+    id: string;
+    label: string;
+    platform: string;
+    database: string;
+};
+
+export type QueryConnectionsResult = {
+    connections: QueryConnection[];
+    defaultConnectionId?: string;
+    maxRows: number;
 };

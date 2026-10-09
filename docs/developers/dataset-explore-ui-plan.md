@@ -7,6 +7,10 @@ frontend calls a separately deployed query service through a same-origin reverse
 keeps database drivers, credentials, SQL validation, and query execution out of the DataHub
 backend and avoids coupling the service lifecycle to DataHub builds.
 
+The Python implementation now lives in `datahub-query-service/`. See its
+[`README`](../../datahub-query-service/README.md) for configuration, deployment, execution
+policies, and verification commands. PostgreSQL is the first supported adapter.
+
 ## User experience
 
 The Explore tab supports five UI states:
@@ -20,8 +24,12 @@ The Explore tab supports five UI states:
 5. **Error**: authorization, validation, unavailable-service, and execution failures are presented
    without losing the user's SQL.
 
-The first version intentionally excludes query history, saved queries, joins across assets,
-downloads, schema autocomplete, and data mutation.
+The first version intentionally excludes query history, saved queries, downloads, schema
+autocomplete, and data mutation. Users may query and
+join any tables accessible to the selected connection's shared read-only account. A dropdown
+defaults from the current dataset URN when a unique accessible connection can be resolved.
+Connections are stored per query tab. Changing connections preserves SQL, clears previous
+results, and requires a separate Run action. Results show the connection that produced them.
 
 ## Frontend-to-service contract
 
@@ -33,6 +41,7 @@ POST /query-service/v1/query
 Content-Type: application/json
 
 {
+  "connectionId": "analytics-prod",
   "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.my_table,PROD)",
   "sql": "SELECT * FROM my_schema.my_table LIMIT 100"
 }
@@ -50,6 +59,7 @@ Successful response:
   "rowCount": 1,
   "executionTimeMs": 24,
   "truncated": false,
+  "connectionId": "analytics-prod",
   "queryId": "optional-audit-id"
 }
 ```
@@ -70,21 +80,27 @@ FastAPI error responses.
 
 - The browser sends same-origin session credentials. It never sends database credentials.
 - The service derives the authenticated identity from the trusted proxy/session integration.
-- The service authorizes the identity against the dataset URN before opening a database
+- The service authorizes the identity against the chosen connection before opening a database
   connection.
 - The temporary shared database user belongs only in the query service configuration. It must not
   be included in frontend configuration or responses.
 - A future LDAP rollout changes identity resolution and database credential selection inside the
   service; the frontend contract remains unchanged.
 
+The execution target is now the explicit `connectionId`; `datasetUrn` supplies context for
+default selection. Discovery uses `GET /query-service/v1/connections?datasetUrn=...` and exposes
+only accessible connection summaries. Execution checks connection access on every request.
+The authenticated frontend session is forwarded as a short-lived signed assertion bound to
+the identity, method, path, token, and body. The Python service rejects unsigned requests.
+
 ## Service responsibilities
 
 The standalone service will:
 
-1. Validate and parse the dataset URN.
-2. Resolve the platform, platform instance, database, schema, and table from DataHub metadata.
-3. Verify the user can query that asset.
-4. Accept only a single read-only statement and restrict it to the selected asset.
+1. Validate the connection ID and the dataset URN used for default discovery.
+2. Resolve the default connection from DataHub metadata and server-side connection configuration.
+3. Verify the user can use the chosen connection.
+4. Accept only a single read-only statement against the chosen connection, using that account's database permissions.
 5. Apply a server-side row limit, timeout, concurrency limit, and result-size limit.
 6. Select a platform adapter and obtain credentials from server-side configuration or the future
    user credential provider.
@@ -107,6 +123,7 @@ not security boundaries.
 ### Phase 2: PostgreSQL service
 
 - Implement metadata resolution and a PostgreSQL adapter.
+- Add connection discovery, per-tab selection, and connection access rules.
 - Configure one least-privilege read-only database user outside source control.
 - Enforce statement, asset, limit, timeout, and authorization policies server-side.
 - Add health/readiness endpoints and structured audit logs.

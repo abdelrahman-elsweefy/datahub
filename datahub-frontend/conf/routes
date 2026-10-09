@@ -36,6 +36,11 @@ PUT           /api/*path                                                      co
 # Proxies browser-emitted OpenTelemetry spans to the internal collector (same-origin, session-authed).
 POST          /otel/v1/traces                                                 controllers.OtelProxyController.exportTraces(request: Request)
 
+# Query execution is handled by the independent Python service.
+GET           /query-service/health                                          controllers.QueryServiceController.health(request: Request)
+GET           /query-service/v1/connections                                  controllers.QueryServiceController.connections(request: Request, datasetUrn: String ?= "")
+POST          /query-service/v1/query                                        controllers.QueryServiceController.query(request: Request)
+
 # Proxies API requests to the metadata service api
 GET           /openapi/*path                                                   controllers.Application.proxy(path: String, request: Request)
 POST          /openapi/*path                                                   controllers.Application.proxy(path: String, request: Request)

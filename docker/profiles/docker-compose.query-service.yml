@@ -1,0 +1,48 @@
+x-query-service: &query-service
+  image: ${DATAHUB_QUERY_SERVICE_IMAGE:-${DATAHUB_REPO:-acryldata}/datahub-query-service}:${DATAHUB_QUERY_SERVICE_VERSION:-${DATAHUB_VERSION:-quickstart}}
+  env_file:
+    - ${DATAHUB_LOCAL_COMMON_ENV:-empty.env}
+  environment: &query-service-env
+    DATAHUB_QUERY_SERVICE_CONFIG: /etc/datahub-query-service/connections.json
+    DATAHUB_QUERY_SERVICE_PROXY_SECRET: ${DATAHUB_QUERY_SERVICE_PROXY_SECRET:-}
+  volumes: &query-service-volumes
+    - ${DATAHUB_QUERY_SERVICE_CONFIG:-../../datahub-query-service/connections.example.json}:/etc/datahub-query-service/connections.json:ro
+    - ${DATAHUB_QUERY_SERVICE_SECRETS_DIR:-../../datahub-query-service/secrets}:/run/secrets/query-service:ro
+  networks:
+    default:
+      aliases:
+        - datahub-query-service
+  extra_hosts:
+    - host.docker.internal:host-gateway
+
+services:
+  datahub-query-service-quickstart:
+    <<: *query-service
+    profiles:
+      - quickstart
+  datahub-query-service-debug:
+    <<: *query-service
+    image: ${DATAHUB_QUERY_SERVICE_IMAGE:-${DATAHUB_REPO:-acryldata}/datahub-query-service}:${DATAHUB_QUERY_SERVICE_VERSION:-${DATAHUB_VERSION:-debug}}
+    profiles:
+      - debug
+    environment:
+      <<: *query-service-env
+      PYTHONPATH: /app/src
+    volumes:
+      - ${DATAHUB_QUERY_SERVICE_CONFIG:-../../datahub-query-service/connections.example.json}:/etc/datahub-query-service/connections.json:ro
+      - ${DATAHUB_QUERY_SERVICE_SECRETS_DIR:-../../datahub-query-service/secrets}:/run/secrets/query-service:ro
+      - ../../datahub-query-service/src:/app/src:ro
+    command:
+      [
+        uvicorn,
+        datahub_query_service.app:create_app,
+        --factory,
+        --host,
+        0.0.0.0,
+        --port,
+        "9004",
+        --reload,
+        --reload-dir,
+        /app/src,
+        --no-access-log,
+      ]

@@ -125,6 +125,7 @@ export default defineConfig(async ({ mode }) => {
         '/openapi/v1/tracking/track': frontendProxy,
         '/openapi/v1/files': frontendProxy,
         '/mfe/config': frontendProxy,
+        '/query-service': frontendProxy,
     };
 
     const isHttps = process.env.REACT_APP_HTTPS === 'true';
