@@ -13,7 +13,7 @@ const Controls = styled.div<{ isCollapsed: boolean }>`
     display: flex;
     align-items: center;
     justify-content: ${(props) => (props.isCollapsed ? 'center' : 'space-between')};
-    height: 56px;
+    min-height: 56px;
     padding: 8px 20px 5px 20px;
     border-bottom: 1px solid ${(props) => props.theme.colors.border};
 `;
@@ -33,11 +33,13 @@ const TabTitle = styled.span`
     color: ${(props) => props.theme.colors.text};
 `;
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-const _TitleDescription = styled.span`
+const TitleDescription = styled.span`
     font-size: 12px;
     font-weight: 400;
+    line-height: 16px;
     color: ${(props) => props.theme.colors.textSecondary};
+    overflow-wrap: anywhere;
+    white-space: normal;
 `;
 
 const Top = styled.div`
@@ -90,6 +92,9 @@ export default function SidebarCollapsibleHeader({ currentTab, headerDropdownIte
                             )}
                         </RightActions>
                     </Top>
+                    {currentTab.headerDescription && (
+                        <TitleDescription>{currentTab.headerDescription}</TitleDescription>
+                    )}
                 </Title>
             )}
         </Controls>

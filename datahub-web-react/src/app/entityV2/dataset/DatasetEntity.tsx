@@ -13,7 +13,9 @@ import {
 } from '@ant-design/icons';
 import { Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
+import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { Table } from '@phosphor-icons/react/dist/csr/Table';
+import { TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import i18next from 'i18next';
 import * as React from 'react';
@@ -45,10 +47,13 @@ import { SidebarTagsSection } from '@app/entityV2/shared/containers/profile/side
 import StatusSection from '@app/entityV2/shared/containers/profile/sidebar/shared/StatusSection';
 import { getDataForEntityType } from '@app/entityV2/shared/containers/profile/utils';
 import EmbeddedProfile from '@app/entityV2/shared/embed/EmbeddedProfile';
+import AskAiSidebarTab from '@app/entityV2/shared/sidebarSection/AskAi/AskAiSidebarTab';
 import SidebarNotesSection from '@app/entityV2/shared/sidebarSection/SidebarNotesSection';
 import SidebarStructuredProperties from '@app/entityV2/shared/sidebarSection/SidebarStructuredProperties';
 import { SUMMARY_TAB_ICON } from '@app/entityV2/shared/summary/HeaderComponents';
 import AccessManagement from '@app/entityV2/shared/tabs/Dataset/AccessManagement/AccessManagement';
+import ExploreTab from '@app/entityV2/shared/tabs/Dataset/Explore/ExploreTab';
+import { QueryWorkspaceProvider } from '@app/entityV2/shared/tabs/Dataset/Explore/QueryWorkspaceProvider';
 import QueriesTab from '@app/entityV2/shared/tabs/Dataset/Queries/QueriesTab';
 import { SchemaTab } from '@app/entityV2/shared/tabs/Dataset/Schema/SchemaTab';
 import StatsTabWrapper from '@app/entityV2/shared/tabs/Dataset/Stats/StatsTabWrapper';
@@ -134,20 +139,22 @@ export class DatasetEntity implements Entity<Dataset> {
     useEntityQuery = useGetDatasetQuery;
 
     renderProfile = (urn: string) => (
-        <EntityProfile
-            urn={urn}
-            entityType={EntityType.Dataset}
-            useEntityQuery={useGetDatasetQuery}
-            useUpdateQuery={useUpdateDatasetMutation}
-            getOverrideProperties={this.getOverridePropertiesFromEntity}
-            headerDropdownItems={headerDropdownItems}
-            subHeader={{
-                component: DatasetStatsSummarySubHeader,
-            }}
-            tabs={this.getProfileTabs()}
-            sidebarSections={this.getSidebarSections()}
-            sidebarTabs={this.getSidebarTabs()}
-        />
+        <QueryWorkspaceProvider key={urn} datasetUrn={urn}>
+            <EntityProfile
+                urn={urn}
+                entityType={EntityType.Dataset}
+                useEntityQuery={useGetDatasetQuery}
+                useUpdateQuery={useUpdateDatasetMutation}
+                getOverrideProperties={this.getOverridePropertiesFromEntity}
+                headerDropdownItems={headerDropdownItems}
+                subHeader={{
+                    component: DatasetStatsSummarySubHeader,
+                }}
+                tabs={this.getProfileTabs()}
+                sidebarSections={this.getSidebarSections()}
+                sidebarTabs={this.getSidebarTabs()}
+            />
+        </QueryWorkspaceProvider>
     );
 
     getProfileTabs = (): EntityTab[] => {
@@ -230,6 +237,15 @@ export class DatasetEntity implements Entity<Dataset> {
                         ).length || 0;
                     const propertiesCount = customPropertiesCount + visibleStructuredPropertiesCount;
                     return propertiesCount;
+                },
+            },
+            {
+                name: i18next.t('entity.types:tab.explore'),
+                component: ExploreTab,
+                icon: TerminalWindow,
+                display: {
+                    visible: (_, _1) => true,
+                    enabled: (_, _2) => true,
                 },
             },
             {
@@ -330,6 +346,13 @@ export class DatasetEntity implements Entity<Dataset> {
     ];
 
     getSidebarTabs = () => [
+        {
+            name: i18next.t('entity.types:tab.askAi'),
+            headerDescription: i18next.t('entity.profile.queries:askAi.description'),
+            component: AskAiSidebarTab,
+            description: i18next.t('entity.types:sidebar.askAiDescription'),
+            icon: Sparkle,
+        },
         {
             name: i18next.t('entity.types:tab.lineage'),
             component: LineageTab,
