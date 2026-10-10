@@ -1,4 +1,8 @@
 import {
+    AskAiConversation,
+    AskAiConversationDetail,
+    AskAiConversationList,
+    AskAiMessage,
     AskAiRequest,
     AskAiResponse,
     AskAiSource,
@@ -7,7 +11,7 @@ import {
 import { resolveRuntimePath } from '@utils/runtimeBasePath';
 
 export const AI_SERVICE_PATH = '/ai-service/v1/ask';
-export const LOCAL_AI_SERVICE_PORT = 8091;
+const SERVICE_ROOT = '/ai-service/v1';
 
 type ErrorPayload = {
     message?: unknown;
@@ -64,6 +68,69 @@ function normalizeSqlAction(value: unknown): AskAiSqlAction | undefined {
     };
 }
 
+function invalidResponse(): never {
+    throw new AskAiServiceError('The AI service returned an invalid response.', 502, 'INVALID_RESPONSE');
+}
+
+function normalizeConversation(value: unknown): AskAiConversation {
+    if (
+        !isRecord(value) ||
+        typeof value.id !== 'string' ||
+        !value.id ||
+        typeof value.title !== 'string' ||
+        typeof value.createdAt !== 'string' ||
+        typeof value.updatedAt !== 'string'
+    ) {
+        return invalidResponse();
+    }
+    return { id: value.id, title: value.title, createdAt: value.createdAt, updatedAt: value.updatedAt };
+}
+
+function normalizeSources(value: unknown): AskAiSource[] {
+    return Array.isArray(value)
+        ? value.map(normalizeSource).filter((source): source is AskAiSource => source !== null)
+        : [];
+}
+
+function normalizeMessage(value: unknown): AskAiMessage {
+    if (
+        !isRecord(value) ||
+        typeof value.id !== 'string' ||
+        typeof value.sequence !== 'number' ||
+        (value.role !== 'user' && value.role !== 'assistant') ||
+        typeof value.text !== 'string' ||
+        typeof value.datasetUrn !== 'string' ||
+        typeof value.datasetName !== 'string' ||
+        typeof value.createdAt !== 'string' ||
+        typeof value.requestId !== 'string' ||
+        (value.status !== 'pending' && value.status !== 'completed' && value.status !== 'failed')
+    ) {
+        return invalidResponse();
+    }
+    return {
+        id: value.id,
+        sequence: value.sequence,
+        role: value.role,
+        text: value.text,
+        datasetUrn: value.datasetUrn,
+        datasetName: value.datasetName,
+        createdAt: value.createdAt,
+        requestId: value.requestId,
+        status: value.status,
+        sqlAction: normalizeSqlAction(value.sqlAction),
+        sources: normalizeSources(value.sources),
+    };
+}
+
+function normalizeDetail(value: unknown): AskAiConversationDetail {
+    if (!isRecord(value) || !Array.isArray(value.messages)) return invalidResponse();
+    return {
+        conversation: normalizeConversation(value.conversation),
+        messages: value.messages.map(normalizeMessage),
+        nextBefore: typeof value.nextBefore === 'number' ? value.nextBefore : null,
+    };
+}
+
 function normalizeResponse(value: unknown): AskAiResponse {
     if (
         !isRecord(value) ||
@@ -71,31 +138,21 @@ function normalizeResponse(value: unknown): AskAiResponse {
         !value.conversationId ||
         typeof value.messageId !== 'string' ||
         !value.messageId ||
-        typeof value.answer !== 'string'
-    ) {
-        throw new AskAiServiceError('The AI service returned an invalid response.', 502, 'INVALID_RESPONSE');
-    }
-
+        typeof value.answer !== 'string' ||
+        typeof value.requestId !== 'string'
+    )
+        return invalidResponse();
     return {
-        requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
+        requestId: value.requestId,
         conversationId: value.conversationId,
         messageId: value.messageId,
         answer: value.answer,
         sqlAction: normalizeSqlAction(value.sqlAction),
-        sources: Array.isArray(value.sources)
-            ? value.sources.map(normalizeSource).filter((source): source is AskAiSource => source !== null)
-            : [],
+        sources: normalizeSources(value.sources),
+        conversation: normalizeConversation(value.conversation),
+        userMessage: normalizeMessage(value.userMessage),
+        assistantMessage: normalizeMessage(value.assistantMessage),
     };
-}
-
-function getServiceUrl(): string {
-    if (
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ) {
-        return `http://${window.location.hostname}:${LOCAL_AI_SERVICE_PORT}${AI_SERVICE_PATH}`;
-    }
-    return resolveRuntimePath(AI_SERVICE_PATH);
 }
 
 async function getErrorPayload(response: Response): Promise<ErrorPayload> {
@@ -107,17 +164,14 @@ async function getErrorPayload(response: Response): Promise<ErrorPayload> {
     }
 }
 
-export async function askDatasetAi(request: AskAiRequest, signal?: AbortSignal): Promise<AskAiResponse> {
-    const response = await fetch(getServiceUrl(), {
-        method: 'POST',
+async function requestService(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<unknown> {
+    const response = await fetch(resolveRuntimePath(`${SERVICE_ROOT}${path}`), {
+        method,
         credentials: 'same-origin',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
         signal,
     });
-
     if (!response.ok) {
         const payload = await getErrorPayload(response);
         const message =
@@ -130,6 +184,49 @@ export async function askDatasetAi(request: AskAiRequest, signal?: AbortSignal):
             typeof payload.code === 'string' ? payload.code : undefined,
         );
     }
+    return response.status === 204 ? undefined : response.json();
+}
 
-    return normalizeResponse(await response.json());
+export async function askDatasetAi(request: AskAiRequest, signal?: AbortSignal): Promise<AskAiResponse> {
+    return normalizeResponse(await requestService('/ask', 'POST', request, signal));
+}
+
+export async function listAiConversations(offset = 0, signal?: AbortSignal): Promise<AskAiConversationList> {
+    const value = await requestService(`/conversations?offset=${offset}`, 'GET', undefined, signal);
+    if (!isRecord(value) || !Array.isArray(value.conversations)) return invalidResponse();
+    return {
+        conversations: value.conversations.map(normalizeConversation),
+        nextOffset: typeof value.nextOffset === 'number' ? value.nextOffset : null,
+    };
+}
+
+export async function createAiConversation(signal?: AbortSignal): Promise<AskAiConversation> {
+    return normalizeConversation(await requestService('/conversations', 'POST', {}, signal));
+}
+
+export async function loadAiConversation(
+    id: string,
+    before?: number,
+    signal?: AbortSignal,
+): Promise<AskAiConversationDetail> {
+    return normalizeDetail(
+        await requestService(
+            `/conversations/${encodeURIComponent(id)}${before ? `?before=${before}` : ''}`,
+            'GET',
+            undefined,
+            signal,
+        ),
+    );
+}
+
+export async function renameAiConversation(id: string, title: string): Promise<AskAiConversation> {
+    return normalizeConversation(await requestService(`/conversations/${encodeURIComponent(id)}`, 'PATCH', { title }));
+}
+
+export async function deleteAiConversation(id: string): Promise<void> {
+    await requestService(`/conversations/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+export async function clearAiConversations(): Promise<void> {
+    await requestService('/conversations', 'DELETE');
 }

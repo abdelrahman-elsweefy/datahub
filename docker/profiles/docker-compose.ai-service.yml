@@ -1,0 +1,44 @@
+---
+services:
+  datahub-ai-service:
+    image: ${DATAHUB_REPO:-acryldata}/datahub-ai-service:${DATAHUB_AI_SERVICE_VERSION:-debug}
+    profiles:
+      - ask-ai
+    env_file:
+      - ${DATAHUB_LOCAL_COMMON_ENV:-empty.env}
+    environment:
+      DATAHUB_AI_SERVICE_CONFIG: /etc/datahub-ai-service/config.json
+      PYTHONPATH: /app/src
+    expose:
+      - 8091
+    volumes:
+      - ai_conversations:/var/lib/datahub-ai
+      - ${DATAHUB_AI_SERVICE_CONFIG_FILE:-../../datahub-ai-service/config.example.json}:/etc/datahub-ai-service/config.json:ro
+      - ${DATAHUB_AI_MODEL_API_KEY_FILE:-/dev/null}:/run/secrets/ai-model-api-key:ro
+      - ../../datahub-ai-service/src:/app/src:ro
+    command:
+      [
+        "uvicorn",
+        "datahub_ai_service.app:create_app",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8091",
+        "--reload",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ai_conversations:

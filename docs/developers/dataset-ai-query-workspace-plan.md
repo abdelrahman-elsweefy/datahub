@@ -2,8 +2,12 @@
 
 ## Status
 
-Implemented as a local frontend and mock-service prototype. The interaction was simplified after
-UI review: Ask AI no longer targets or overwrites existing query tabs. Every structured SQL
+Implemented with a frontend and an independent DeepAgents AI service with private, persistent
+conversation history. Conversations belong to the user and continue across dataset navigation;
+each message retains its dataset context. See
+[`datahub-ai-service/README.md`](../../datahub-ai-service/README.md) for configuration and API details.
+
+The interaction was simplified after UI review: Ask AI no longer targets or overwrites existing query tabs. Every structured SQL
 response stays in the conversation until the user selects **Open in Explore**.
 
 This design extends the dataset Explore experience described in
@@ -28,7 +32,7 @@ can then be opened in a new query tab.
 
 - Executing SQL from the Ask AI panel.
 - Allowing AI to modify or overwrite an existing query tab.
-- Saving workspaces or conversations to a DataHub backend.
+- Saving query workspaces to a DataHub backend. Ask AI conversations are saved in the independent AI service.
 - Sharing query workspaces between users.
 - Building the AI/MCP service as part of the DataHub GMS.
 - Exposing database credentials, MCP credentials, or model credentials to the browser.
@@ -181,18 +185,19 @@ New-tab request:
 ```json
 {
   "context": {
-    "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)",
-    "userUrn": "urn:li:corpuser:user1"
+    "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)"
   },
   "question": "Add a seven-day filter to this query:\nSELECT event_date, COUNT(*) FROM my_schema.events GROUP BY event_date",
   "conversationId": null,
+  "requestId": "11111111-1111-4111-8111-111111111111",
   "target": {
     "mode": "NEW_TAB"
   }
 }
 ```
 
-Successful response:
+Successful response (core fields; the service also returns the saved `conversation`,
+`userMessage` and `assistantMessage` records):
 
 ```json
 {
@@ -228,7 +233,9 @@ client.
 
 ## AI and MCP service responsibilities
 
-The future independent service will:
+The independent service handles authentication, dataset access, schema retrieval, DeepAgents
+invocation and private conversation persistence. Approved MCP tools can be added later. Its
+responsibilities are:
 
 1. Derive the authenticated user from the trusted proxy or session integration.
 2. Authorize that user to view and query the requested dataset URN.
@@ -338,9 +345,12 @@ during implementation rather than introducing a parallel framework.
 - Verify existing Summary, Lineage, Columns, Props, and Explore behavior is unchanged.
 - Update this document with any contract changes discovered during implementation.
 
-### Phase 7: future service implementation
+### Phase 7: AI service and conversation persistence
 
-- Implement the independent AI service and health endpoints.
+- Implement the independent DeepAgents AI service and health endpoints.
+- Persist user-owned titled conversations and per-message dataset context.
+- Keep the active chat and draft above dataset navigation; restore history from the backend.
+- Provide saved-chat selection, rename, deletion and clear-all controls.
 - Add DataHub authentication and dataset authorization.
 - Add metadata retrieval, model orchestration, and approved MCP/tool integration.
 - Add structured-output validation and service-side safety limits.

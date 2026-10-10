@@ -176,3 +176,9 @@ test-models/bin/
 # Generated per-page markdown mirror for AI tools (emitted by
 # docs-website/generateDocsDir.ts, served at /docs/<slug>.md)
 docs-website/static/docs/
+
+# Local Ask AI configuration and conversation storage
+datahub-ai-service/*.local.json
+datahub-ai-service/*.sqlite*
+datahub-ai-service/data/
+datahub-ai-service/src/*.egg-info/

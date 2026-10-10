@@ -44,6 +44,19 @@ def test_env_set_accepts_valid_key(tmp_path, monkeypatch):
     assert "MY_VAR_123=somevalue" in env_file.read_text()
 
 
+@pytest.mark.parametrize(
+    "schema", ["public; DROP TABLE branch", 'bad"schema', "../public"]
+)
+def test_explore_demo_rejects_unsafe_schema_before_starting(
+    tmp_path, monkeypatch, schema
+):
+    monkeypatch.setattr(datahub_dev, "REPO_ROOT", tmp_path)
+    args = argparse.Namespace(schema=schema, dataset_urn=None)
+
+    assert datahub_dev.cmd_explore_demo(args) == 1
+    assert not (tmp_path / "datahub-query-service").exists()
+
+
 def test_dev_env_promotes_configured_aws_profile(tmp_path, monkeypatch):
     env_file = tmp_path / "test.env"
     env_file.write_text("AWS_PROFILE=developer\n")
@@ -195,3 +208,35 @@ def test_plugin_loading_bad_ext_does_not_crash(tmp_path, monkeypatch):
     config = datahub_dev._load_config()
     assert "gms" in config.rebuild_module_aliases
     assert any(svc.name == "gms" for svc in config.services)
+
+
+def test_start_ask_ai_selects_profile_and_creates_proxy_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    writes: dict[str, str] = {}
+    monkeypatch.setattr(datahub_dev, "RUNNER", None)
+    monkeypatch.setattr(
+        datahub_dev,
+        "_load_registry",
+        lambda: {"instances": {datahub_dev.WORKTREE_ID: {"ports": {}}}},
+    )
+    monkeypatch.setattr(datahub_dev, "_load_dev_config", lambda: {})
+    monkeypatch.setattr(datahub_dev, "_find_conflicting_projects", lambda ports: {})
+    monkeypatch.setattr(datahub_dev, "_dev_env", lambda: {})
+    monkeypatch.setattr(
+        datahub_dev, "_write_env_var", lambda key, value: writes.update({key: value})
+    )
+    monkeypatch.setattr(datahub_dev, "cmd_wait", lambda args: 0)
+
+    def run(
+        command: list[str], **kwargs: object
+    ) -> datahub_dev.subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return datahub_dev.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(datahub_dev, "_run", run)
+    args = datahub_dev.build_parser().parse_args(["start", "--ask-ai"])
+    assert datahub_dev.cmd_start(args) == 0
+    assert ["./gradlew", "quickstartDebugAskAi"] in commands
+    assert len(writes["DATAHUB_AI_SERVICE_PROXY_SECRET"]) >= 32

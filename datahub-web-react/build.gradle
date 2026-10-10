@@ -398,3 +398,17 @@ compileJava.dependsOn yarnGenerate
 processResources.dependsOn yarnGenerate
 compileTestJava.dependsOn yarnGenerate
 processTestResources.dependsOn yarnGenerate
+
+// Keep focused Ask AI checks available through Gradle without running unrelated frontend tests.
+tasks.register('yarnAskAiLintFix', YarnTask) {
+  dependsOn yarnInstall, yarnGenerate, generateLazyIconStubs
+  args = ['run', 'lint-fix-file', 'src/app/entityV2/shared/sidebarSection/AskAi', 'src/app/AppProviders.tsx']
+}
+tasks.register('yarnAskAiFormat', YarnTask) {
+  dependsOn yarnInstall, yarnGenerate, generateLazyIconStubs
+  args = ['run', 'format-file', 'src/app/entityV2/shared/sidebarSection/AskAi', 'src/app/AppProviders.tsx', 'src/i18n/locales/en/entity.profile.queries.json', 'vite.config.ts', '../datahub-ai-service/README.md', '../docs/developers/dataset-ai-query-workspace-plan.md', '../tools/dataset_ai_mock_service/README.md', '../docker/profiles/docker-compose.ai-service.yml']
+}
+tasks.register('yarnTypeCheck', YarnTask) {
+  dependsOn yarnInstall, yarnGenerate, generateLazyIconStubs
+  args = ['run', 'type-check']
+}

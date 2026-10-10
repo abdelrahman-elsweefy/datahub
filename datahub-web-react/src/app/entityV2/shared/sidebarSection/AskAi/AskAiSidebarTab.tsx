@@ -2,27 +2,18 @@ import { Button, Loader, Text, TextArea } from '@components';
 import { ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { PaperPlaneTilt } from '@phosphor-icons/react/dist/csr/PaperPlaneTilt';
-import React, { KeyboardEvent, useEffect, useRef, useState } from 'react';
+import React, { KeyboardEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import styled from 'styled-components';
 
-import { useUserContext } from '@app/context/useUserContext';
 import { useEntityData, useRouteToTab } from '@app/entity/shared/EntityContext';
-import { AskAiSqlAction } from '@app/entityV2/shared/sidebarSection/AskAi/askAi.types';
-import { AskAiServiceError, askDatasetAi } from '@app/entityV2/shared/sidebarSection/AskAi/askAiService';
+import { useAskAiConversation } from '@app/entityV2/shared/sidebarSection/AskAi/AskAiConversationContext';
+import AskAiConversationControls from '@app/entityV2/shared/sidebarSection/AskAi/AskAiConversationControls';
+import { AskAiMessage } from '@app/entityV2/shared/sidebarSection/AskAi/askAi.types';
 import { useQueryWorkspace } from '@app/entityV2/shared/tabs/Dataset/Explore/QueryWorkspaceContext';
 import { EntityTabProps } from '@app/entityV2/shared/types';
 
 const SUGGESTION_KEYS = ['explain', 'preview', 'group'] as const;
-
-type ConversationMessage = {
-    id: string;
-    role: 'user' | 'assistant';
-    text: string;
-    requestId?: string;
-    sqlAction?: AskAiSqlAction;
-    queryTabId?: string;
-};
 
 const Panel = styled.div`
     display: flex;
@@ -143,35 +134,22 @@ const RequestId = styled.span`
     font-size: 10px;
 `;
 
-function getServiceErrorMessage(error: unknown, fallback: string): string {
-    if (error instanceof AskAiServiceError || error instanceof Error) {
-        return error.message;
-    }
-    return fallback;
-}
-
 export default function AskAiSidebarTab(_props: EntityTabProps) {
     const { t } = useTranslation('entity.profile.queries');
     const { t: entityTypesT } = useTranslation('entity.types');
-    const { urn } = useEntityData();
+    const { urn, entityData } = useEntityData();
     const routeToTab = useRouteToTab();
-    const userContext = useUserContext();
     const { workspace, canCreateTab, createTab, setActiveTab } = useQueryWorkspace();
-    const abortController = useRef<AbortController | null>(null);
-    const [prompt, setPrompt] = useState('');
-    const [conversationId, setConversationId] = useState<string | null>(null);
-    const [messages, setMessages] = useState<ConversationMessage[]>([]);
-    const [isAsking, setIsAsking] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const chat = useAskAiConversation();
+    const { messages, isAsking, initialize } = chat;
+    const prompt = chat.draft;
+    const setPrompt = chat.setDraft;
+    const [actionError, setActionError] = useState<string | null>(null);
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-
-    const userUrn = userContext.user?.urn || userContext.urn || '';
-    useEffect(
-        () => () => {
-            abortController.current?.abort();
-        },
-        [],
-    );
+    const error = actionError || chat.error;
+    useEffect(() => {
+        initialize();
+    }, [initialize]);
 
     const openExplore = (tabId: string) => {
         setActiveTab(tabId);
@@ -180,52 +158,9 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
 
     const submitPrompt = async () => {
         const question = prompt.trim();
-        if (!question || !urn || !userUrn || isAsking) {
-            return;
-        }
-
-        const userMessageId = `user-${Date.now()}`;
-        setMessages((current) => [...current, { id: userMessageId, role: 'user', text: question }]);
-        setIsAsking(true);
-        setError(null);
-        abortController.current?.abort();
-        const controller = new AbortController();
-        abortController.current = controller;
-
-        try {
-            const response = await askDatasetAi(
-                {
-                    context: { datasetUrn: urn, userUrn },
-                    question,
-                    conversationId,
-                    target: { mode: 'NEW_TAB' },
-                },
-                controller.signal,
-            );
-            setConversationId(response.conversationId);
-            setPrompt('');
-
-            setMessages((current) => [
-                ...current,
-                {
-                    id: response.messageId,
-                    role: 'assistant',
-                    text: response.answer,
-                    requestId: response.requestId,
-                    sqlAction: response.sqlAction,
-                },
-            ]);
-        } catch (requestError) {
-            if (requestError instanceof DOMException && requestError.name === 'AbortError') {
-                return;
-            }
-            setError(getServiceErrorMessage(requestError, t('askAi.errors.unexpected')));
-        } finally {
-            if (abortController.current === controller) {
-                abortController.current = null;
-                setIsAsking(false);
-            }
-        }
+        if (!question || !urn || isAsking || chat.isLoading) return;
+        setActionError(null);
+        await chat.submit(question, urn);
     };
 
     const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -235,16 +170,10 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
         }
     };
 
-    const updateMessage = (messageId: string, update: Partial<ConversationMessage>) => {
-        setMessages((current) =>
-            current.map((message) => (message.id === messageId ? { ...message, ...update } : message)),
-        );
-    };
-
-    const createSqlTab = (message: ConversationMessage) => {
+    const createSqlTab = (message: AskAiMessage) => {
         const action = message.sqlAction;
-        if (!action || !canCreateTab) {
-            setError(t('askAi.errors.tabLimit'));
+        if (!action || !canCreateTab || message.datasetUrn !== urn) {
+            setActionError(t('askAi.errors.tabLimit'));
             return;
         }
         const tab = createTab({
@@ -256,12 +185,21 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
             isDirty: true,
         });
         if (tab) {
-            updateMessage(message.id, { queryTabId: tab.id });
+            chat.updateMessage(message.id, { queryTabId: tab.id });
             openExplore(tab.id);
         }
     };
 
-    const openMessageTab = (message: ConversationMessage) => {
+    const openMessageTab = (message: AskAiMessage) => {
+        if (message.datasetUrn !== urn) {
+            setActionError(t('askAi.errors.differentDataset'));
+            return;
+        }
+        const existing = workspace.tabs.find((tab) => tab.sourceMessageId === message.id);
+        if (existing) {
+            openExplore(existing.id);
+            return;
+        }
         if (message.queryTabId && workspace.tabs.some((tab) => tab.id === message.queryTabId)) {
             openExplore(message.queryTabId);
             return;
@@ -269,7 +207,7 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
         createSqlTab(message);
     };
 
-    const copySql = async (message: ConversationMessage) => {
+    const copySql = async (message: AskAiMessage) => {
         if (!message.sqlAction) {
             return;
         }
@@ -280,6 +218,7 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
 
     return (
         <Panel>
+            <AskAiConversationControls />
             <Messages aria-live="polite">
                 {messages.length === 0 && (
                     <Suggestions>
@@ -297,7 +236,13 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
                 )}
                 {messages.map((message) => (
                     <Message key={message.id} $role={message.role}>
+                        <Text size="xs">{t('askAi.datasetContext', { name: message.datasetName })}</Text>
                         <Text size="sm">{message.text}</Text>
+                        {message.status === 'failed' && message.id === messages?.[messages.length - 1]?.id && (
+                            <Button size="sm" variant="text" disabled={isAsking} onClick={() => chat.retry(message)}>
+                                {t('askAi.history.retry')}
+                            </Button>
+                        )}
                         {message.requestId && <RequestId>{t('askAi.requestId', { id: message.requestId })}</RequestId>}
                         {message.sqlAction && (
                             <SqlCard>
@@ -305,11 +250,15 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
                                     {message.sqlAction.title}
                                 </Text>
                                 <SqlCode>{message.sqlAction.statement}</SqlCode>
+                                {message.datasetUrn !== urn && (
+                                    <Text size="xs">{t('askAi.errors.differentDataset')}</Text>
+                                )}
                                 <Actions>
                                     <Button
                                         size="sm"
                                         variant="outline"
                                         icon={{ icon: ArrowSquareOut }}
+                                        disabled={message.datasetUrn !== urn}
                                         onClick={() => openMessageTab(message)}
                                     >
                                         {t('askAi.actions.openExplore')}
@@ -342,13 +291,14 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
                 </ErrorMessage>
             )}
             <Composer>
+                <Text size="xs">{t('askAi.currentDataset', { name: entityData?.name || urn })}</Text>
                 <TextArea
                     value={prompt}
                     onChange={(event) => setPrompt(event.target.value)}
                     onKeyDown={handlePromptKeyDown}
                     placeholder={t('askAi.placeholder')}
                     rows={3}
-                    isDisabled={isAsking}
+                    isDisabled={isAsking || chat.isLoading}
                     inputTestId="ask-ai-input"
                 />
                 <ComposerActions>
@@ -356,7 +306,7 @@ export default function AskAiSidebarTab(_props: EntityTabProps) {
                     <Button
                         size="sm"
                         icon={{ icon: PaperPlaneTilt, weight: 'fill' }}
-                        disabled={!prompt.trim() || !urn || !userUrn || isAsking}
+                        disabled={!prompt.trim() || !urn || isAsking || chat.isLoading}
                         isLoading={isAsking}
                         onClick={submitPrompt}
                         data-testid="ask-ai-submit"

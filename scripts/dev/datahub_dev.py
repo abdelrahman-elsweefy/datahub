@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -179,6 +180,7 @@ PORT_BASE: Dict[str, int] = {
     "DATAHUB_MAPPED_MAE_CONSUMER_PORT": 9091,
     "DATAHUB_MAPPED_MCE_CONSUMER_PORT": 9090,
     "DATAHUB_MAPPED_MCE_DEBUG_PORT": 5009,
+    "DATAHUB_MAPPED_EXPLORE_POSTGRES_PORT": 55432,
 }
 SLOT_OFFSET: int = 1000
 
@@ -416,6 +418,7 @@ def _default_config() -> DevToolingConfig:
                 ":metadata-jobs:mae-consumer-job:bootJar",
                 "datahub-mae-consumer",
             ),
+            "datahub-ai-service/": (":datahub-ai-service:docker", "datahub-ai-service"),
             "metadata-io/": (":metadata-service:war:bootJar", "datahub-gms"),
             "datahub-query-service/": (
                 ":datahub-query-service:dockerPrepare",
@@ -423,6 +426,7 @@ def _default_config() -> DevToolingConfig:
             ),
         },
         rebuild_module_aliases={
+            "ai-service": "datahub-ai-service",
             "gms": "datahub-gms",
             "frontend": "datahub-frontend-react",
             "mce": "datahub-mce-consumer",
@@ -1252,6 +1256,116 @@ def cmd_env_clean(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Command: explore-demo
+# ---------------------------------------------------------------------------
+
+
+def cmd_explore_demo(args: argparse.Namespace) -> int:
+    """Create an isolated, persistent PostgreSQL fixture for Explore."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", args.schema):
+        _log("ERROR: Use a lowercase SQL identifier for --schema.")
+        return 1
+    if args.dataset_urn and not args.dataset_urn.startswith("urn:li:dataset:("):
+        _log("ERROR: --dataset-urn must identify a DataHub dataset.")
+        return 1
+    demo_dir = REPO_ROOT / "datahub-query-service" / "build" / "explore-demo"
+    secret_dir = REPO_ROOT / "datahub-query-service" / "secrets"
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    for filename, directory, mode in [
+        ("admin-password", demo_dir, 0o600),
+        ("explore-demo-password", secret_dir, 0o644),
+    ]:
+        password_file = directory / filename
+        if not password_file.exists():
+            password_file.write_text(secrets.token_hex(32) + "\n")
+        password_file.chmod(mode)
+    # The reader file is mounted for container UID 10001; it grants access only to fake data.
+    reader_password = (secret_dir / "explore-demo-password").read_text().strip()
+    if not re.fullmatch(r"[a-f0-9]{64}", reader_password):
+        _log("ERROR: The demo reader password file is invalid.")
+        return 1
+    template = (Path(__file__).parent / "explore-demo.sql").read_text()
+    seed_file = demo_dir / "seed.sql"
+    seed_file.write_text(
+        template.replace("__SCHEMA__", args.schema).replace(
+            "__READER_PASSWORD__", reader_password
+        )
+    )
+    seed_file.chmod(0o644)
+    cmd_env_set(argparse.Namespace(assignment=f"DATAHUB_EXPLORE_DEMO_DIR={demo_dir}"))
+    compose = [
+        "docker",
+        "compose",
+        "--env-file",
+        str(DEV_ENV_FILE),
+        "-p",
+        COMPOSE_PROJECT,
+        "-f",
+        str(DOCKER_DIR / "profiles" / "docker-compose.yml"),
+        "--profile",
+        "explore-demo",
+    ]
+    result = _run(
+        compose + ["up", "-d", "--wait", "--wait-timeout", "120", "explore-postgres"],
+        capture=False,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        return result.returncode
+    # Re-running setup preserves existing rows and credentials on the persistent volume.
+    result = _run(
+        compose
+        + [
+            "exec",
+            "-T",
+            "explore-postgres",
+            "psql",
+            "-U",
+            "postgres",
+            "-d",
+            "explore_demo",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-f",
+            "/docker-entrypoint-initdb.d/seed.sql",
+        ],
+        capture=False,
+    )
+    if result.returncode != 0:
+        return result.returncode
+    config_file = REPO_ROOT / "datahub-query-service" / "connections.local.json"
+    config = json.loads(config_file.read_text()) if config_file.exists() else {}
+    connection = {
+        "id": "explore-demo",
+        "label": "PostgreSQL — Explore demo",
+        "platform": "postgres",
+        "host": "explore-postgres",
+        "port": 5432,
+        "database": "explore_demo",
+        "username": "explore_reader",
+        "passwordFile": "/run/secrets/query-service/explore-demo-password",
+        "sslmode": "disable",
+        "defaultSchema": args.schema,
+        "environment": "DEV",
+        "allowedUserUrns": [args.user_urn],
+        "datasetUrns": [args.dataset_urn] if args.dataset_urn else [],
+    }
+    config["connections"] = [
+        item for item in config.get("connections", []) if item["id"] != "explore-demo"
+    ] + [connection]
+    config_file.write_text(json.dumps(config, indent=2) + "\n")
+    for key, value in [
+        ("DATAHUB_QUERY_SERVICE_CONFIG", config_file),
+        ("DATAHUB_QUERY_SERVICE_SECRETS_DIR", secret_dir),
+    ]:
+        cmd_env_set(argparse.Namespace(assignment=f"{key}={value}"))
+    _log(f"Created {args.schema}.branch with 150 fake rows in explore_demo.")
+    _log("Apply the Explore connection with: scripts/dev/datahub-dev.sh env restart")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Command: stop
 # ---------------------------------------------------------------------------
 
@@ -1389,6 +1503,7 @@ def cmd_nuke(args: argparse.Namespace) -> int:
 
 # Maps short names to Gradle tasks. None = special-cased (e.g. frontend uses yarn).
 SETUP_MODULES: Dict[str, Optional[str]] = {
+    "ai-service": ":datahub-ai-service:installDev",
     "ingestion": ":metadata-ingestion:installDev",
     "smoke-test": ":smoke-test:installDev",
     "airflow-plugin": ":metadata-ingestion-modules:airflow-plugin:installDev",
@@ -1672,6 +1787,8 @@ def _cmd_start_remote(args: argparse.Namespace) -> int:
     # 2. Start on remote — DATAHUB_REMOTE_EXEC=1 suppresses runner detection there
     _log("Starting DataHub on remote machine (this may take a few minutes)...")
     start_argv = ["env", "DATAHUB_REMOTE_EXEC=1", "scripts/dev/datahub-dev.sh", "start"]
+    if getattr(args, "ask_ai", False):
+        start_argv.append("--ask-ai")
     if getattr(args, "ai", False):
         start_argv.append("--ai")
     if getattr(args, "no_ai", False):
@@ -1801,6 +1918,17 @@ def cmd_start(args: argparse.Namespace) -> int:
                 "  To reach Ollama from the host (smoke tests), use: "
                 "LOCAL_EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings"
             )
+
+    if getattr(args, "ask_ai", False):
+        task = (
+            "quickstartDebugAiAskAi"
+            if task == "quickstartDebugAi"
+            else "quickstartDebugAskAi"
+        )
+        env_vars = _dev_env()
+        if len(env_vars.get("DATAHUB_AI_SERVICE_PROXY_SECRET", "")) < 32:
+            _write_env_var("DATAHUB_AI_SERVICE_PROXY_SECRET", secrets.token_urlsafe(48))
+        _log("Starting Ask AI with persistent conversation storage.")
 
     _log(f"Starting DataHub via {task}...")
     result = _run(
@@ -2049,6 +2177,15 @@ def build_parser() -> argparse.ArgumentParser:
     # frontend
     subparsers.add_parser("frontend", help="Start the frontend dev server (yarn start)")
 
+    demo_p = subparsers.add_parser(
+        "explore-demo", help="Start PostgreSQL with a fake branch table for Explore"
+    )
+    demo_p.add_argument("--schema", default="public")
+    demo_p.add_argument(
+        "--dataset-urn", help="Existing dataset to select this connection"
+    )
+    demo_p.add_argument("--user-urn", default="urn:li:corpuser:datahub")
+
     # docs
     docs_p = subparsers.add_parser(
         "docs", help="Start documentation dev server (Docusaurus)"
@@ -2062,6 +2199,11 @@ def build_parser() -> argparse.ArgumentParser:
     # start
     start_p = subparsers.add_parser(
         "start", help="Start DataHub (quickstartDebug) and wait for readiness"
+    )
+    start_p.add_argument(
+        "--ask-ai",
+        action="store_true",
+        help="Start the Ask AI service with saved conversations",
     )
     start_p.add_argument(
         "--ai",
@@ -2230,6 +2372,7 @@ def main() -> int:
         "status": cmd_status,
         "setup": cmd_setup,
         "frontend": cmd_frontend,
+        "explore-demo": cmd_explore_demo,
         "docs": cmd_docs,
         "start": cmd_start,
         "stop": cmd_stop,

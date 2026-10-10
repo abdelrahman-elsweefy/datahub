@@ -4,6 +4,7 @@ import EntityRegistryProvider from '@app/EntityRegistryProvider';
 import GlobalSettingsProvider from '@app/context/GlobalSettingsProvider';
 import UserContextProvider from '@app/context/UserContextProvider';
 import { DocumentTreeProvider } from '@app/document/DocumentTreeContext';
+import AskAiConversationProvider from '@app/entityV2/shared/sidebarSection/AskAi/AskAiConversationProvider';
 import { NavBarProvider } from '@app/homeV2/layout/navBarRedesign/NavBarContext';
 import HomePageProvider from '@app/homeV3/context/HomePageProvider';
 import I18nProvider from '@app/i18n/context/I18nProvider';
@@ -34,7 +35,11 @@ export default function AppProviders({ children }: Props) {
                                                 <SearchContextProvider>
                                                     <ReloadableProvider>
                                                         <HomePageProvider>
-                                                            <NavBarProvider>{children}</NavBarProvider>
+                                                            <NavBarProvider>
+                                                                <AskAiConversationProvider>
+                                                                    {children}
+                                                                </AskAiConversationProvider>
+                                                            </NavBarProvider>
                                                         </HomePageProvider>
                                                     </ReloadableProvider>
                                                 </SearchContextProvider>

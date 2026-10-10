@@ -334,6 +334,17 @@ ext {
             ]
     ]
 
+    quickstart_configs['quickstartDebugAskAi'] = quickstart_configs['quickstartDebug'] + [
+        profile: null,
+        profiles: ['debug', 'ask-ai'],
+        modules: quickstart_configs['quickstartDebug'].modules + [':datahub-ai-service'],
+    ]
+    quickstart_configs['quickstartDebugAiAskAi'] = quickstart_configs['quickstartDebugAi'] + [
+        profile: null,
+        profiles: ['debug', 'debug-ai', 'ask-ai'],
+        modules: quickstart_configs['quickstartDebugAi'].modules + [':datahub-ai-service'],
+    ]
+
     // only for debug variants of quickstart to enable <variant>Reload tasks.
     // The name here is the service name prefix. The suffix doesnt follow a fixed convention across all profiles.
     // This list only contains modules that can be reloaded via the reloadTask. Python services support hot reload.
@@ -348,6 +359,7 @@ ext {
     moduleToContainerWithHotReload = [
         ':datahub-query-service': 'datahub-query-service',
         ':datahub-actions': 'datahub-actions',
+        ':datahub-ai-service': 'datahub-ai-service',
     ]
 
     // Helper function to read the captured profile name from file
@@ -378,6 +390,12 @@ ext {
     // Helper function to find the taskName and config that uses a given profile (only searches debug tasks)
     // Returns a map with 'taskName' and 'config' keys
     findTaskNameByProfile = { profile ->
+        def capturedTask = readCapturedTaskName.call()
+        def capturedConfig = quickstart_configs[capturedTask]
+        if (capturedConfig?.isDebug &&
+                (capturedConfig.profile == profile || capturedConfig.profiles?.contains(profile))) {
+            return [taskName: capturedTask, config: capturedConfig]
+        }
         def matchingTask = quickstart_configs.find { taskName, config ->
             config.isDebug && (config.profile == profile || (config.profiles && config.profiles.contains(profile)))
         }
@@ -975,6 +993,8 @@ tasks.register("reloadEnv", Exec) {
         }
         environment.put "DATAHUB_REPO", "${docker_registry}"
         environment.put "DATAHUB_SYSTEM_CLIENT_SECRET", System.getenv("DATAHUB_SYSTEM_CLIENT_SECRET") ?: "JohnSnowKnowsNothing"
+        // Compose interpolates bind mounts from its process environment, before reading service env_file.
+        loadCommonEnvFile.call().each { key, value -> environment.put key, value }
         resolveTokenServiceSecrets.call().each { key, value -> environment.put key, value }
 
         // Additional environment variables if specified

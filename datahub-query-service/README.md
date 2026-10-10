@@ -1,5 +1,24 @@
 # DataHub Query Service
 
+For local Explore testing, start a separate PostgreSQL database with 150 fake rows
+in a `branch` table (`id`, `lsid`, `code`, and nullable `manager`):
+
+```bash
+scripts/dev/datahub-dev.sh explore-demo
+scripts/dev/datahub-dev.sh env restart
+```
+
+Pass `--schema <schema>` and `--dataset-urn '<dataset urn>'` to connect an existing
+catalog dataset. Only `urn:li:corpuser:datahub` can use the demo connection by
+default; `--user-urn` selects another user. The database uses a persistent volume,
+and repeating setup preserves existing rows and credentials. Its host port is
+`127.0.0.1:55432` (plus the instance slot offset). The Explore account can only
+read the fake table. Configuration and generated passwords are gitignored.
+
+Try `SELECT * FROM branch ORDER BY id LIMIT 10;`, or group by `manager` to test
+aggregations. An unbounded query shows the result limit; filtering on a missing
+ID tests an empty result.
+
 A standalone Python service for the Explore SQL editor. Users choose a database connection;
 the current dataset selects the initial connection when an unambiguous match exists. Queries
 may read any table accessible to that connection's shared read-only database account.

@@ -1,0 +1,21 @@
+services:
+  explore-postgres:
+    image: postgres:16
+    profiles: [explore-demo]
+    environment:
+      POSTGRES_DB: explore_demo
+      POSTGRES_PASSWORD_FILE: /run/secrets/admin-password
+    ports:
+      - "127.0.0.1:${DATAHUB_MAPPED_EXPLORE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - explore-postgres-data:/var/lib/postgresql/data
+      - ${DATAHUB_EXPLORE_DEMO_DIR:-../../datahub-query-service/build/explore-demo}/admin-password:/run/secrets/admin-password:ro
+      - ${DATAHUB_EXPLORE_DEMO_DIR:-../../datahub-query-service/build/explore-demo}/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U postgres -d explore_demo"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  explore-postgres-data:

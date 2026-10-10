@@ -121,6 +121,7 @@ export default defineConfig(async ({ mode }) => {
     const proxyOptions = {
         '/logIn': frontendProxy,
         '/authenticate': frontendProxy,
+        '/ai-service': frontendProxy,
         '/api/v2/graphql': frontendProxy,
         '/openapi/v1/tracking/track': frontendProxy,
         '/openapi/v1/files': frontendProxy,

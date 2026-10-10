@@ -33,6 +33,12 @@ POST          /api/*path                                                      co
 DELETE        /api/*path                                                      controllers.Application.proxy(path: String, request: Request)
 PUT           /api/*path                                                      controllers.Application.proxy(path: String, request: Request)
 
+# Session-authenticated proxy to the independent Ask AI service.
+GET           /ai-service/*path                                               controllers.AiServiceController.forward(path: String, request: Request)
+POST          /ai-service/*path                                               controllers.AiServiceController.forward(path: String, request: Request)
+PATCH         /ai-service/*path                                               controllers.AiServiceController.forward(path: String, request: Request)
+DELETE        /ai-service/*path                                               controllers.AiServiceController.forward(path: String, request: Request)
+
 # Proxies browser-emitted OpenTelemetry spans to the internal collector (same-origin, session-authed).
 POST          /otel/v1/traces                                                 controllers.OtelProxyController.exportTraces(request: Request)
 

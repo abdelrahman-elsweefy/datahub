@@ -1,0 +1,46 @@
+plugins { id 'base' }
+apply from: "${rootProject.projectDir}/gradle/python/python-uv.gradle"
+apply from: "${rootProject.projectDir}/gradle/versioning/versioning.gradle"
+apply from: "${rootProject.projectDir}/gradle/docker/docker.gradle"
+
+def servicePython = project.findProperty('aiServicePython') ?: 'python3.11'
+def python = "${projectDir}/venv/bin/python"
+
+tasks.register('environmentSetup', Exec) {
+  inputs.file 'pyproject.toml'
+  outputs.file 'venv/bin/python'
+  commandLine servicePython, '-m', 'venv', "${projectDir}/venv"
+}
+tasks.register('installDev', Exec) {
+  dependsOn 'environmentSetup'
+  inputs.file 'pyproject.toml'
+  outputs.file 'venv/.installed'
+  commandLine 'bash', '-c', "${python} -m pip install -e '.[dev]' && touch venv/.installed"
+}
+tasks.register('lint', Exec) {
+  dependsOn 'installDev'
+  commandLine 'bash', '-c', "${python} -m ruff check src tests && ${python} -m ruff format --check src tests && ${python} -m mypy src tests"
+}
+tasks.register('lintFix', Exec) {
+  dependsOn 'installDev'
+  commandLine 'bash', '-c', "${python} -m ruff format src tests && ${python} -m ruff check --fix src tests"
+}
+tasks.register('test', Exec) {
+  dependsOn 'installDev'
+  commandLine python, '-m', 'pytest', '--junitxml=build/test-results/unit.xml'
+}
+check.dependsOn 'lint', 'test'
+clean { delete 'venv' }
+
+tasks.named('lint') { mustRunAfter 'lintFix' }
+
+docker {
+  name "${docker_registry}/datahub-ai-service:${versionTag}"
+  dockerfile file("${rootProject.projectDir}/docker/datahub-ai-service/Dockerfile")
+  files fileTree(rootProject.projectDir) {
+    include 'datahub-ai-service/pyproject.toml'
+    include 'datahub-ai-service/src/**'
+    include 'docker/datahub-ai-service/Dockerfile'
+  }
+  additionalTag('Debug', "${docker_registry}/datahub-ai-service:debug")
+}

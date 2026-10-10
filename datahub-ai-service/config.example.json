@@ -1,0 +1,9 @@
+{
+  "databasePath": "/var/lib/datahub-ai/conversations.sqlite",
+  "model": "",
+  "modelApiKeyFile": "/run/secrets/ai-model-api-key",
+  "datahubGraphqlUrl": "http://datahub-gms:8080/api/graphql",
+  "timeoutSeconds": 120,
+  "maxContextCharacters": 64000,
+  "maxConcurrentRequests": 10
+}

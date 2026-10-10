@@ -1,5 +1,9 @@
 # Dataset Ask AI Mock Service
 
+This is the legacy frontend-contract prototype. The persistent Ask AI UI uses
+[`datahub-ai-service`](../../datahub-ai-service/README.md); this mock does not support its
+conversation APIs and should not be used for saved-chat development.
+
 This dependency-free development service validates the dataset Ask AI frontend contract. It logs
 structured request and response payloads to its terminal and returns explanatory text plus sample
 SQL. It does not call a model, MCP server, database, or DataHub API.

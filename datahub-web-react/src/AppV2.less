@@ -57,3 +57,9 @@
 .themeV2 * {
     font-family: @font-family-v2;
 }
+
+// Monaco measures glyphs using its configured font on the parent layers.
+.themeV2 .monaco-editor .view-line,
+.themeV2 .monaco-editor .view-line span {
+    font-family: inherit;
+}

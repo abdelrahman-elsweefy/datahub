@@ -1,119 +1,135 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AskAiConversation, AskAiMessage } from '@app/entityV2/shared/sidebarSection/AskAi/askAi.types';
 import {
     AI_SERVICE_PATH,
     AskAiServiceError,
-    LOCAL_AI_SERVICE_PORT,
     askDatasetAi,
+    deleteAiConversation,
+    listAiConversations,
+    loadAiConversation,
+    renameAiConversation,
 } from '@app/entityV2/shared/sidebarSection/AskAi/askAiService';
 
-vi.mock('@utils/runtimeBasePath', () => ({
-    resolveRuntimePath: vi.fn((path: string) => path),
-}));
+vi.mock('@utils/runtimeBasePath', () => ({ resolveRuntimePath: vi.fn((path: string) => `/datahub${path}`) }));
 
 const DATASET_URN = 'urn:li:dataset:(urn:li:dataPlatform:postgres,my_db.my_schema.events,PROD)';
-const USER_URN = 'urn:li:corpuser:user1';
-const PASTED_SQL_QUESTION = 'Improve this query:\nSELECT * FROM my_schema.events';
+const CONVERSATION: AskAiConversation = {
+    id: 'conversation-1',
+    title: 'Dataset analysis',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+};
+const MESSAGE: AskAiMessage = {
+    id: 'message-1',
+    sequence: 1,
+    role: 'assistant',
+    text: 'Here is a query.',
+    datasetUrn: DATASET_URN,
+    datasetName: 'events',
+    createdAt: '2026-01-01',
+    requestId: 'request-1',
+    status: 'completed',
+    sources: [],
+};
 
 function responseWith(payload: unknown, ok = true, status = 200): Response {
-    return {
-        ok,
-        status,
-        json: vi.fn().mockResolvedValue(payload),
-    } as unknown as Response;
+    return { ok, status, json: vi.fn().mockResolvedValue(payload) } as unknown as Response;
 }
 
-describe('askDatasetAi', () => {
-    let originalFetch: typeof global.fetch;
+const RESPONSE = {
+    requestId: 'request-1',
+    conversationId: CONVERSATION.id,
+    messageId: MESSAGE.id,
+    answer: MESSAGE.text,
+    sqlAction: { type: 'CREATE_TAB', title: 'Preview', statement: 'SELECT 1', dialect: 'postgresql' },
+    conversation: CONVERSATION,
+    userMessage: { ...MESSAGE, id: 'user-1', role: 'user' },
+    assistantMessage: MESSAGE,
+    sources: [],
+};
 
+describe('Ask AI service', () => {
+    let originalFetch: typeof global.fetch;
     beforeEach(() => {
         originalFetch = global.fetch;
     });
-
     afterEach(() => {
         global.fetch = originalFetch;
         vi.clearAllMocks();
     });
 
-    it('sends dataset and user context and normalizes a SQL action', async () => {
-        global.fetch = vi.fn().mockResolvedValue(
-            responseWith({
-                requestId: 'request-1',
-                conversationId: 'conversation-1',
-                messageId: 'message-1',
-                answer: 'Here is a query.',
-                sqlAction: {
-                    type: 'CREATE_TAB',
-                    title: 'Daily events',
-                    statement: 'SELECT * FROM my_schema.events',
-                    dialect: 'postgresql',
-                },
-                sources: [],
-            }),
-        );
+    it('sends questions through the authenticated same-origin proxy with a retry ID', async () => {
+        global.fetch = vi.fn().mockResolvedValue(responseWith(RESPONSE));
         const request = {
-            context: { datasetUrn: DATASET_URN, userUrn: USER_URN },
-            question: PASTED_SQL_QUESTION,
-            conversationId: null,
+            context: { datasetUrn: DATASET_URN },
+            question: 'Improve this query:\nSELECT 1',
+            conversationId: CONVERSATION.id,
+            requestId: 'request-1',
             target: { mode: 'NEW_TAB' as const },
         };
-
         const response = await askDatasetAi(request);
-
         expect(global.fetch).toHaveBeenCalledWith(
-            `http://localhost:${LOCAL_AI_SERVICE_PORT}${AI_SERVICE_PATH}`,
-            expect.objectContaining({
-                method: 'POST',
-                credentials: 'same-origin',
-                body: JSON.stringify(request),
-            }),
+            `/datahub${AI_SERVICE_PATH}`,
+            expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: JSON.stringify(request) }),
         );
         expect(response.sqlAction?.type).toBe('CREATE_TAB');
-        expect(response.requestId).toBe('request-1');
+        expect(response.conversation.title).toBe(CONVERSATION.title);
+        expect(response.assistantMessage.datasetUrn).toBe(DATASET_URN);
     });
 
-    it('ignores the removed update-tab response action', async () => {
-        global.fetch = vi.fn().mockResolvedValue(
-            responseWith({
-                conversationId: 'conversation-1',
-                messageId: 'message-1',
-                answer: 'Here is a revised query.',
-                sqlAction: {
-                    type: 'UPDATE_TAB',
-                    targetTabId: 'tab-1',
-                    title: 'Daily events',
-                    statement: 'SELECT * FROM my_schema.events LIMIT 10',
-                    dialect: 'postgresql',
-                },
-                sources: [],
-            }),
-        );
-
-        const response = await askDatasetAi({
-            context: { datasetUrn: DATASET_URN, userUrn: USER_URN },
-            question: PASTED_SQL_QUESTION,
-            target: { mode: 'NEW_TAB' },
-        });
-
-        expect(response.sqlAction).toBeUndefined();
-    });
-
-    it('surfaces a safe service error', async () => {
+    it('ignores actions that overwrite existing query tabs', async () => {
         global.fetch = vi
             .fn()
-            .mockResolvedValue(responseWith({ message: 'Dataset access denied', code: 'FORBIDDEN' }, false, 403));
+            .mockResolvedValue(responseWith({ ...RESPONSE, sqlAction: { type: 'UPDATE_TAB', statement: 'SELECT 2' } }));
+        expect(
+            (
+                await askDatasetAi({
+                    context: { datasetUrn: DATASET_URN },
+                    question: 'Revise SQL',
+                    target: { mode: 'NEW_TAB' },
+                })
+            ).sqlAction,
+        ).toBeUndefined();
+    });
 
-        await expect(
-            askDatasetAi({
-                context: { datasetUrn: DATASET_URN, userUrn: USER_URN },
-                question: 'Create a query',
-                target: { mode: 'NEW_TAB' },
-            }),
-        ).rejects.toMatchObject({
+    it('loads paginated conversations and their original dataset messages', async () => {
+        global.fetch = vi
+            .fn()
+            .mockResolvedValueOnce(responseWith({ conversations: [CONVERSATION], nextOffset: 50 }))
+            .mockResolvedValueOnce(responseWith({ conversation: CONVERSATION, messages: [MESSAGE], nextBefore: 1 }));
+        expect((await listAiConversations()).nextOffset).toBe(50);
+        const loaded = await loadAiConversation(CONVERSATION.id, 10);
+        expect(loaded.messages?.[0]?.datasetUrn).toBe(DATASET_URN);
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            `/datahub/ai-service/v1/conversations/${CONVERSATION.id}?before=10`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+    });
+
+    it('renames and deletes saved conversations without parsing an empty delete response', async () => {
+        global.fetch = vi
+            .fn()
+            .mockResolvedValueOnce(responseWith({ ...CONVERSATION, title: 'My analysis' }))
+            .mockResolvedValueOnce(responseWith(undefined, true, 204));
+        expect((await renameAiConversation(CONVERSATION.id, 'My analysis')).title).toBe('My analysis');
+        await deleteAiConversation(CONVERSATION.id);
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            `/datahub/ai-service/v1/conversations/${CONVERSATION.id}`,
+            expect.objectContaining({ method: 'DELETE' }),
+        );
+    });
+
+    it('surfaces safe errors and rejects malformed saved messages', async () => {
+        global.fetch = vi
+            .fn()
+            .mockResolvedValueOnce(responseWith({ message: 'Dataset access denied', code: 'FORBIDDEN' }, false, 403))
+            .mockResolvedValueOnce(responseWith({ conversation: CONVERSATION, messages: [{ role: 'assistant' }] }));
+        await expect(listAiConversations()).rejects.toMatchObject({
             name: AskAiServiceError.name,
-            message: 'Dataset access denied',
             status: 403,
             code: 'FORBIDDEN',
         });
+        await expect(loadAiConversation(CONVERSATION.id)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
     });
 });

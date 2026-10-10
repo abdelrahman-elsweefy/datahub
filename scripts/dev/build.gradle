@@ -24,3 +24,12 @@ task lintFix(type: Exec, dependsOn: installRuff) {
   commandLine 'bash', '-c',
     "${venv_ruff} check --fix . && ${venv_ruff} format ."
 }
+
+tasks.register('lintFixSelected') {
+  dependsOn installRuff
+  doLast {
+    def selected = (project.findProperty('devFiles') ?: 'datahub_dev.py').split(',').toList()
+    execOps.exec { commandLine([venv_ruff, 'format'] + selected) }
+    execOps.exec { commandLine([venv_ruff, 'check', '--fix'] + selected) }
+  }
+}

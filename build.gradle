@@ -1031,6 +1031,7 @@ tasks.register('lintCheck') {
   group = 'verification'
   description = 'Run all lint checks (Python, JS, GraphQL, markdown, Java)'
   dependsOn(':metadata-ingestion:lint')
+  dependsOn(':datahub-ai-service:lint')
   dependsOn(':datahub-actions:lint')
   dependsOn(':datahub-query-service:lint')
   dependsOn(':datahub-agent-context:lint')
@@ -1054,6 +1055,7 @@ tasks.register('lintFix') {
   description = 'Auto-fix all lint issues'
   dependsOn('format')
   dependsOn(':metadata-ingestion:lintFix')
+  dependsOn(':datahub-ai-service:lintFix')
   dependsOn(':datahub-actions:lintFix')
   dependsOn(':datahub-query-service:lintFix')
   dependsOn(':datahub-agent-context:lintFix')
